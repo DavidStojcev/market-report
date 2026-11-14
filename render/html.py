@@ -2,9 +2,10 @@
 
 from typing import Any, Dict, List, Optional
 from data.calendar import PeriodInfo
+from indicators.breadth import format_percentile_ordinal
 from sections.base import SectionResult
 from sections.breadth import BreadthSectionData
-from sections.conclusion import ConclusionData
+from sections.conclusion import ConclusionData, DEFAULT_COMPLIANCE_DISCLAIMER
 from sections.executive_summary import ExecutiveSummaryData
 from sections.index_snapshot import IndexSnapshotData
 from sections.macro import MacroSectionData
@@ -17,7 +18,7 @@ from sections.swing_regime import SwingGateData
 from sections.theme_relative_strength import ThemeRelativeStrengthData
 from sections.commodities_cross_asset import CommoditiesCrossAssetData
 from sections.fed_path import FedPathData
-from sections.forward_calendar import ForwardCalendarData
+from sections.forward_calendar import ForwardCalendarData, _fmt_ev_value
 from sections.earnings import EarningsLayerData
 from sections.sentiment_positioning import SentimentPositioningData
 from sections.valuation import ValuationData
@@ -43,6 +44,18 @@ def _fmt_price(val: float) -> str:
     return f'<span class="font-mono">{val:,.2f}</span>'
 
 
+def _render_toggletip(tip_id: str, html_body: str, label: str = "More details") -> str:
+    """Render an accessible hover/focus/click toggletip using popover='hint' + interestfor."""
+    if not html_body:
+        return ""
+    return (
+        f'<button type="button" class="toggletip-btn" '
+        f'interestfor="{tip_id}" popovertarget="{tip_id}" popovertargetaction="show" '
+        f'aria-label="{label}" title="{label}">i</button>'
+        f'<div id="{tip_id}" class="toggletip-popover" popover="hint" role="tooltip">{html_body}</div>'
+    )
+
+
 def _fmt_macro_val(val: Optional[float], unit: str) -> str:
     """Format macro release value according to its economic unit."""
     if val is None or not isinstance(val, (int, float)):
@@ -57,6 +70,57 @@ def _fmt_macro_val(val: Optional[float], unit: str) -> str:
     if u == "%":
         return f"{val:.2f}%"
     return f"{val:+.2f}{u}"
+
+
+def _render_scenario_matrix_html(mat: Any) -> str:
+    """Render a JPMorgan-style 3-branch Event Scenario Matrix card & table in HTML."""
+    rows_html: List[str] = []
+    for o in mat.outcomes:
+        s_low = o.scenario.lower()
+        if any(k in s_low for k in ("hot", "hawkish", "weak", "miss", "heavier", "delayed", "sub-consensus")):
+            b_cls = "badge-bearish"
+        elif any(k in s_low for k in ("cool", "dovish", "relief", "beat", "lighter", "divided", "goldilocks")):
+            b_cls = "badge-bullish"
+        else:
+            b_cls = "badge-neutral"
+        rows_html.append(f"""
+        <tr>
+            <td><strong>{o.scenario}</strong></td>
+            <td class="text-center"><span class="badge {b_cls}">{o.probability_hint}</span></td>
+            <td>{o.trigger_threshold}</td>
+            <td class="text-center font-mono font-bold">{o.spy_reaction}</td>
+            <td style="font-size: 12px;">{o.rates_usd_reaction}</td>
+            <td style="font-size: 12px;">{o.sector_playbook}</td>
+        </tr>
+        """)
+    imp_cls = "badge-red" if str(mat.importance).upper() == "HIGH" else "badge-neutral"
+    note_html = f'<p class="table-caption" style="margin-top: 6px;"><em>{mat.desk_note}</em></p>' if getattr(mat, "desk_note", "") else ""
+    return f"""
+    <div style="margin-top: 14px;">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px;">
+            <strong style="font-size: 0.92rem;">{mat.event_title}</strong>
+            <span class="badge {imp_cls}">{mat.importance}</span>
+            <span class="badge badge-muted font-mono">{mat.event_date} &bull; {mat.event_time_et}</span>
+            <span class="text-muted font-mono" style="font-size: 12px;">Prior: {mat.prior_display} &bull; Cons: {mat.consensus_display}</span>
+        </div>
+        <div class="table-container">
+            <table class="report-table compact-table">
+                <thead>
+                    <tr>
+                        <th>Scenario Branch</th>
+                        <th class="text-center">Condition Tier</th>
+                        <th>Trigger / Condition</th>
+                        <th class="text-center">Options-Implied SPY Move</th>
+                        <th>Rates &amp; USD</th>
+                        <th>Historically sensitive sectors</th>
+                    </tr>
+                </thead>
+                <tbody>{''.join(rows_html)}</tbody>
+            </table>
+        </div>
+        {note_html}
+    </div>
+    """
 
 
 def _render_chart_html(chart: Optional[Any]) -> str:
@@ -89,16 +153,16 @@ def _render_sidebar(period: PeriodInfo, sections: List[SectionResult]) -> str:
 
     categories = [
         ("1. Overview & Posture", [1, 2, 3, 4], True),
-        ("2. Technicals & Breadth", [5, 6, 7, 14], False),
-        ("3. Sectors & Themes", [8, 9], False),
-        ("4. Macro & Catalysts", [10, 11, 12, 17], False),
-        ("5. Fundamentals & Outlook", [13, 15, 16, 18, 19], False),
+        ("2. Technicals & Breadth", [5, 6, 7], False),
+        ("3. Sectors & Cross-Asset", [8, 9, 10], False),
+        ("4. Fed, Calendar & Movers", [11, 12, 13, 14], False),
+        ("5. Watchlist, Macro & Outlook", [15, 16, 17, 18, 19], False),
     ]
 
     default_titles = {
         1: "Executive Summary",
         2: "What Changed: Key Deltas",
-        3: "Swing-Trade Posture",
+        3: "Market Regime & Risk Appetite",
         4: "Index Snapshot",
         5: "Technical Indicators",
         6: "Market Breadth",
@@ -110,7 +174,7 @@ def _render_sidebar(period: PeriodInfo, sections: List[SectionResult]) -> str:
         12: "Forward Calendar",
         13: "Earnings Progress",
         14: "Top Movers",
-        15: "Tactical Watchlist",
+        15: "Focus Screener",
         16: "Market Sentiment",
         17: "Macro Events",
         18: "Market Outlook",
@@ -120,39 +184,49 @@ def _render_sidebar(period: PeriodInfo, sections: List[SectionResult]) -> str:
     is_full_report = len(sections) >= 10
     details_html = []
 
-    for cat_title, nums, is_open in categories:
-        links_html = []
-        for n in nums:
-            if n in sec_map:
-                t = default_titles.get(n, sec_map[n].title) if is_full_report else sec_map[n].title
-                links_html.append(f'<a href="#section-{n}" class="nav-link">{n}. {t}</a>')
-            elif is_full_report:
-                t = default_titles.get(n, f"Section {n}")
-                links_html.append(f'<a href="#section-{n}" class="nav-link">{n}. {t}</a>')
+    if is_full_report:
+        for cat_title, nums, is_open in categories:
+            links_html = []
+            for n in nums:
+                if n in sec_map:
+                    t = default_titles.get(n, sec_map[n].title)
+                    links_html.append(f'<a href="#section-{n}" class="nav-link">{n}. {t}</a>')
 
-        if links_html:
-            open_attr = "open" if is_open else ""
+            if links_html:
+                open_attr = "open" if is_open else ""
+                details_html.append(f"""
+                <details {open_attr}>
+                    <summary>{cat_title}</summary>
+                    {''.join(links_html)}
+                </details>
+                """)
+
+        # Render any unmapped sections in a dynamic section if present
+        mapped_nums = {n for _, nums, _ in categories for n in nums}
+        extra_links = [
+            f'<a href="#section-{s.section_num}" class="nav-link">{s.section_num}. {s.title}</a>'
+            for s in sections
+            if s.section_num not in mapped_nums
+        ]
+        if extra_links:
             details_html.append(f"""
-            <details {open_attr}>
-                <summary>{cat_title}</summary>
-                {''.join(links_html)}
+            <details open>
+                <summary>Additional Sections</summary>
+                {''.join(extra_links)}
             </details>
             """)
-
-    # Render any unmapped sections in a dynamic section if present
-    mapped_nums = {n for _, nums, _ in categories for n in nums}
-    extra_links = [
-        f'<a href="#section-{s.section_num}" class="nav-link">{s.section_num}. {s.title}</a>'
-        for s in sections
-        if s.section_num not in mapped_nums
-    ]
-    if extra_links:
-        details_html.append(f"""
-        <details open>
-            <summary>Additional Sections</summary>
-            {''.join(extra_links)}
-        </details>
-        """)
+    else:
+        brief_links = [
+            f'<a href="#section-{s.section_num}" class="nav-link">{s.section_num}. {s.title}</a>'
+            for s in sections
+        ]
+        if brief_links:
+            details_html.append(f"""
+            <details open>
+                <summary>Daily Briefing</summary>
+                {''.join(brief_links)}
+            </details>
+            """)
 
     return f"""
     <aside class="sidebar" id="sidebar">
@@ -165,7 +239,7 @@ def _render_sidebar(period: PeriodInfo, sections: List[SectionResult]) -> str:
             </div>
         </div>
 
-        <nav class="nav-menu">
+        <nav class="nav-menu" aria-label="Report chapters">
             {''.join(details_html)}
         </nav>
         <div class="sidebar-footer">
@@ -175,7 +249,7 @@ def _render_sidebar(period: PeriodInfo, sections: List[SectionResult]) -> str:
     """
 
 
-def _render_top10_ticker_strip(sections: List[SectionResult]) -> str:
+def _render_top10_ticker_strip(sections: List[SectionResult], period: Optional[PeriodInfo] = None) -> str:
     """Render compact executive ticker strip of top 10 core market metrics."""
     spx_close, spx_pct = None, None
     ndx_close, ndx_pct = None, None
@@ -183,35 +257,81 @@ def _render_top10_ticker_strip(sections: List[SectionResult]) -> str:
     macro_score, macro_regime, score_class = None, "Neutral", "text-muted"
     vix_val, vix_delta = None, None
     breadth_50 = None
+    ad_ratio, net_nh, mcclellan, lead_spread = None, None, None, None
     y10, y10_delta = None, None
     oas_bps, oas_delta = None, None
     vrp, vrp_regime = None, "Normal"
     wti_price, wti_3m = None, None
+
+    idx_num, exec_num, swing_num = 4, 1, 3
+    vol_num, breadth_num, macro_num, sent_num, comm_num = 7, 6, 17, 16, 10
 
     for sec in sections:
         if not sec.is_available:
             continue
         data = sec.data
         if isinstance(data, IndexSnapshotData):
+            idx_num = sec.section_num
             for r in data.rows:
                 if r.symbol == "^GSPC":
                     spx_close, spx_pct = r.close, r.pct_change
                 elif r.symbol == "^NDX":
                     ndx_close, ndx_pct = r.close, r.pct_change
+            if y10 is None and getattr(data, "cross_asset_line", None):
+                import re as _re_ca
+                m_ca = _re_ca.search(r"10Y Yield\s+([0-9\.]+)%", data.cross_asset_line)
+                if m_ca:
+                    y10 = float(m_ca.group(1))
+                m_cad = _re_ca.search(r"10Y Yield\s+[0-9\.]+%\s*\(([-+]?[0-9\.]+)\s*bps\)", data.cross_asset_line)
+                if m_cad:
+                    y10_delta = float(m_cad.group(1))
+        elif isinstance(data, WhatChangedData):
+            import re as _re_wc
+            for d in getattr(data, "deltas", []):
+                if d.name == "10-Year Treasury Yield":
+                    if y10 is None:
+                        m_y = _re_wc.search(r"[-+]?\d+(?:\.\d+)?", str(d.current_val))
+                        if m_y:
+                            y10 = float(m_y.group(0))
+                    if y10_delta is None:
+                        m_dy = _re_wc.search(r"[-+]?\d+(?:\.\d+)?", str(d.delta_str))
+                        if m_dy:
+                            y10_delta = float(m_dy.group(0))
+                elif d.name == "High-Yield Credit OAS Spread":
+                    if oas_bps is None:
+                        m_o = _re_wc.search(r"[-+]?\d+(?:\.\d+)?", str(d.current_val))
+                        if m_o:
+                            oas_bps = float(m_o.group(0))
+                    if oas_delta is None:
+                        m_do = _re_wc.search(r"[-+]?\d+(?:\.\d+)?", str(d.delta_str))
+                        if m_do:
+                            oas_delta = float(m_do.group(0))
         elif isinstance(data, SwingGateData):
+            swing_num = sec.section_num
             posture = data.posture
             posture_class = data.posture_badge_class
+            if vix_val is None:
+                vix_val = getattr(data, "vix_level", None)
+                vix_delta = getattr(data, "vix_5d_trend", None)
         elif isinstance(data, ExecutiveSummaryData):
+            exec_num = sec.section_num
             macro_score = data.normalized_score
             macro_regime = data.verdict
             v_low = data.verdict.lower()
             score_class = "text-green" if v_low in ("bullish", "risk-on", "constructive") else ("text-red" if v_low in ("bearish", "risk-off", "cautious") else "text-muted")
         elif isinstance(data, VolatilityData):
+            vol_num = sec.section_num
             vix_val = data.current_level
             vix_delta = data.change
         elif isinstance(data, BreadthSectionData):
+            breadth_num = sec.section_num
             breadth_50 = data.result.pct_above_50_dma.current
+            ad_ratio = getattr(data.result, "ad_ratio", None)
+            net_nh = getattr(data.result, "net_new_highs", None)
+            mcclellan = getattr(data.result, "mcclellan_oscillator", None)
+            lead_spread = getattr(data.result, "leadership_spread_pct", None)
         elif isinstance(data, MacroSectionData):
+            macro_num = sec.section_num
             if data.fed_rates:
                 y10 = data.fed_rates.yield_10y
                 y10_delta = data.fed_rates.yield_10y_delta * 100.0
@@ -223,9 +343,11 @@ def _render_top10_ticker_strip(sections: List[SectionResult]) -> str:
                 oas_bps = data.intelligence.credit.spread_bps
                 oas_delta = data.intelligence.credit.delta_bps
         elif isinstance(data, SentimentPositioningData):
+            sent_num = sec.section_num
             vrp = data.vol_risk_premium
             vrp_regime = data.vol_premium_regime.split("(")[0].strip()
         elif isinstance(data, CommoditiesCrossAssetData):
+            comm_num = sec.section_num
             for row in data.items:
                 if row.symbol == "CL=F":
                     wti_price = row.current_price
@@ -257,85 +379,136 @@ def _render_top10_ticker_strip(sections: List[SectionResult]) -> str:
 
     posture_badge_cls = "badge-red" if posture == "DEFENSIVE" else ("badge-green" if posture == "FULL" else "badge-amber")
 
-    # Formatting 6 secondary KPI items
+    # Formatting secondary KPI items
+    vix_tf = (
+        "1d" if (period and period.report_type == "daily")
+        else ("1m" if (period and period.report_type == "monthly") else "1w")
+    )
     vix_str = f"{vix_val:.2f}" if vix_val is not None else "n/a"
-    vix_sub = f"{vix_delta:+.2f} 5d" if vix_delta is not None else "—"
+    vix_sub = f"{vix_delta:+.2f} {vix_tf}" if vix_delta is not None else "—"
     vix_c = "text-red" if (vix_val and vix_val >= 20.0) else ("text-green" if (vix_val and vix_val < 16.5) else "text-muted")
+    vix_href = f"#section-{vol_num}" if any(isinstance(s.data, VolatilityData) for s in sections) else f"#section-{swing_num}"
 
     br_str = f"{breadth_50:.1f}%" if breadth_50 is not None else "n/a"
     br_sub = "SPX > 50-DMA"
     br_c = "text-green font-bold" if (breadth_50 and breadth_50 >= 60.0) else ("text-red font-bold" if (breadth_50 and breadth_50 <= 40.0) else "text-muted")
 
-    y10_str = f"{y10:.2f}%" if y10 is not None else "n/a"
-    y10_sub = f"{y10_delta:+.0f} bps" if y10_delta is not None else "—"
+    secondary_cards = [
+        f"""<a href="{vix_href}" class="kpi-secondary-card" title="Jump to Volatility / Regime">
+                <span class="kpi-label">CBOE VIX</span>
+                <span class="kpi-val font-mono">{vix_str}</span>
+                <span class="kpi-sub {vix_c} font-mono">{vix_sub}</span>
+            </a>""",
+        f"""<a href="#section-{breadth_num}" class="kpi-secondary-card" title="Jump to Market Breadth">
+                <span class="kpi-label">50-DMA Breadth</span>
+                <span class="kpi-val font-mono">{br_str}</span>
+                <span class="kpi-sub {br_c} font-mono">{br_sub}</span>
+            </a>""",
+    ]
 
-    oas_str = f"{oas_bps:.0f} bps" if oas_bps is not None else "n/a"
-    oas_sub = f"{oas_delta:+.0f} bps" if oas_delta is not None else "—"
-    oas_c = "text-green" if (oas_delta and oas_delta < 0) else ("text-red" if (oas_delta and oas_delta > 0) else "text-muted")
+    has_macro_strip = any(x is not None for x in (y10, oas_bps, vrp, wti_price))
+    if has_macro_strip:
+        y10_str = f"{y10:.2f}%" if y10 is not None else "n/a"
+        y10_sub = f"{y10_delta:+.0f} bps" if y10_delta is not None else "—"
+        oas_str = f"{oas_bps:.0f} bps" if oas_bps is not None else "n/a"
+        oas_sub = f"{oas_delta:+.0f} bps" if oas_delta is not None else "—"
+        oas_c = "text-green" if (oas_delta and oas_delta < 0) else ("text-red" if (oas_delta and oas_delta > 0) else "text-muted")
+        vrp_str = f"{vrp:+.1f} pts" if vrp is not None else "n/a"
+        vrp_sub = vrp_regime[:10]
+        vrp_c = "text-green" if (vrp and vrp > 2.0) else ("text-red" if (vrp and vrp < 0) else "text-muted")
+        wti_str = f"${wti_price:.2f}" if wti_price is not None else "n/a"
+        wti_sub = f"{wti_3m:+.2f}% 3M" if wti_3m is not None else "WTI Oil"
+        wti_c = "text-red" if (wti_3m and wti_3m > 15.0) else "text-muted"
+        comm_sec = next((s for s in sections if isinstance(s.data, CommoditiesCrossAssetData)), None)
+        macro_sec = next((s for s in sections if isinstance(s.data, MacroSectionData)), None)
+        sent_sec = next((s for s in sections if isinstance(s.data, SentimentPositioningData)), None)
+        
+        y10_href = f"#section-{comm_sec.section_num}" if comm_sec else f"#section-{idx_num}"
+        oas_href = f"#section-{macro_sec.section_num}" if macro_sec else "#section-2"
+        sent_href = f"#section-{sent_sec.section_num}" if sent_sec else f"#section-{exec_num}"
+        comm_href = f"#section-{comm_sec.section_num}" if comm_sec else f"#section-{idx_num}"
 
-    vrp_str = f"{vrp:+.1f} pts" if vrp is not None else "n/a"
-    vrp_sub = vrp_regime[:10]
-    vrp_c = "text-green" if (vrp and vrp > 2.0) else ("text-red" if (vrp and vrp < 0) else "text-muted")
-
-    wti_str = f"${wti_price:.2f}" if wti_price is not None else "n/a"
-    wti_sub = f"{wti_3m:+.2f}% 3M" if wti_3m is not None else "WTI Oil"
-    wti_c = "text-red" if (wti_3m and wti_3m > 15.0) else "text-muted"
+        secondary_cards.extend([
+            f"""<a href="{y10_href}" class="kpi-secondary-card" title="Jump to 10Y Treasury Yield">
+                <span class="kpi-label">10Y Treasury</span>
+                <span class="kpi-val font-mono">{y10_str}</span>
+                <span class="kpi-sub text-muted font-mono">{y10_sub}</span>
+            </a>""",
+            f"""<a href="{oas_href}" class="kpi-secondary-card" title="Jump to Credit Spreads">
+                <span class="kpi-label">HY OAS Spread</span>
+                <span class="kpi-val font-mono">{oas_str}</span>
+                <span class="kpi-sub {oas_c} font-mono">{oas_sub}</span>
+            </a>""",
+            f"""<a href="{sent_href}" class="kpi-secondary-card" title="Jump to Volatility Risk Premium">
+                <span class="kpi-label">Vol Risk (VRP)</span>
+                <span class="kpi-val font-mono">{vrp_str}</span>
+                <span class="kpi-sub {vrp_c} font-mono">{vrp_sub}</span>
+            </a>""",
+            f"""<a href="{comm_href}" class="kpi-secondary-card" title="Jump to Commodities">
+                <span class="kpi-label">WTI Crude</span>
+                <span class="kpi-val font-mono">{wti_str}</span>
+                <span class="kpi-sub {wti_c} font-mono">{wti_sub}</span>
+            </a>""",
+        ])
+    else:
+        ad_str = f"{ad_ratio:.2f}" if ad_ratio is not None else "—"
+        ad_c = "text-green" if (ad_ratio is not None and ad_ratio >= 1.2) else ("text-red" if (ad_ratio is not None and ad_ratio < 0.8) else "text-muted")
+        ad_sub = "Adv / Dec"
+        nh_str = f"{net_nh:+d}" if net_nh is not None else "—"
+        nh_c = "text-green" if (net_nh is not None and net_nh > 0) else ("text-red" if (net_nh is not None and net_nh < 0) else "text-muted")
+        mc_str = f"{mcclellan:+.1f}" if mcclellan is not None else "—"
+        mc_c = "text-green" if (mcclellan is not None and mcclellan > 0) else ("text-red" if (mcclellan is not None and mcclellan < 0) else "text-muted")
+        sp_str = f"{lead_spread:+.2f}%" if lead_spread is not None else "—"
+        sp_c = "text-green" if (lead_spread is not None and lead_spread < 0) else "text-muted"
+        secondary_cards.extend([
+            f"""<a href="#section-{breadth_num}" class="kpi-secondary-card" title="Jump to Advance / Decline Ratio">
+                <span class="kpi-label">A/D Ratio</span>
+                <span class="kpi-val font-mono">{ad_str}</span>
+                <span class="kpi-sub {ad_c} font-mono">{ad_sub}</span>
+            </a>""",
+            f"""<a href="#section-{breadth_num}" class="kpi-secondary-card" title="Jump to Net 52-Week Highs">
+                <span class="kpi-label">Net 52W Highs</span>
+                <span class="kpi-val font-mono">{nh_str}</span>
+                <span class="kpi-sub {nh_c} font-mono">Highs − Lows</span>
+            </a>""",
+            f"""<a href="#section-{breadth_num}" class="kpi-secondary-card" title="Jump to McClellan Oscillator">
+                <span class="kpi-label">McClellan Osc.</span>
+                <span class="kpi-val font-mono">{mc_str}</span>
+                <span class="kpi-sub {mc_c} font-mono">Breadth Mom.</span>
+            </a>""",
+            f"""<a href="#section-{breadth_num}" class="kpi-secondary-card" title="Jump to SPY vs RSP Spread">
+                <span class="kpi-label">SPY vs RSP</span>
+                <span class="kpi-val font-mono">{sp_str}</span>
+                <span class="kpi-sub {sp_c} font-mono">Cap vs Equal</span>
+            </a>""",
+        ])
 
     return f"""
     <div class="top10-ticker-strip">
         <div class="kpi-grid">
-            <a href="#section-4" class="kpi-card" title="Jump to S&P 500 in Index Snapshot">
+            <a href="#section-{idx_num}" class="kpi-card" title="Jump to S&P 500 in Index Snapshot">
                 <span class="kpi-label">S&amp;P 500 (^GSPC)</span>
                 <span class="kpi-val font-mono">{spx_str}</span>
                 <span class="kpi-sub {spx_c} font-mono">{spx_sub}</span>
             </a>
-            <a href="#section-4" class="kpi-card" title="Jump to Nasdaq-100 in Index Snapshot">
+            <a href="#section-{idx_num}" class="kpi-card" title="Jump to Nasdaq-100 in Index Snapshot">
                 <span class="kpi-label">Nasdaq-100 (^NDX)</span>
                 <span class="kpi-val font-mono">{ndx_str}</span>
                 <span class="kpi-sub {ndx_c} font-mono">{ndx_sub}</span>
             </a>
-            <a href="#section-1" class="kpi-card" title="Jump to Executive Summary & Macro Verdict">
+            <a href="#section-{exec_num}" class="kpi-card" title="Jump to Executive Summary & Macro Verdict">
                 <span class="kpi-label">Macro Score</span>
                 <span class="kpi-val font-mono">{score_str}</span>
                 <span class="kpi-sub text-muted font-mono">{score_sub}</span>
             </a>
-            <a href="#section-3" class="kpi-card" title="Jump to Swing-Trade Posture Gate">
-                <span class="kpi-label">Swing Posture</span>
+            <a href="#section-{swing_num}" class="kpi-card" title="Jump to Market Regime &amp; Risk Appetite">
+                <span class="kpi-label">Market Posture</span>
                 <span class="badge {posture_badge_cls}" style="width: fit-content; margin-top: 4px;">{posture}</span>
-                <span class="kpi-sub text-muted" style="margin-top: auto;">Apex Gate</span>
+                <span class="kpi-sub text-muted" style="margin-top: auto;">Regime Gate</span>
             </a>
         </div>
         <div class="kpi-secondary-grid">
-            <a href="#section-7" class="kpi-secondary-card" title="Jump to Volatility (VIX)">
-                <span class="kpi-label">CBOE VIX</span>
-                <span class="kpi-val font-mono">{vix_str}</span>
-                <span class="kpi-sub {vix_c} font-mono">{vix_sub}</span>
-            </a>
-            <a href="#section-6" class="kpi-secondary-card" title="Jump to Market Breadth">
-                <span class="kpi-label">50-DMA Breadth</span>
-                <span class="kpi-val font-mono">{br_str}</span>
-                <span class="kpi-sub {br_c} font-mono">{br_sub}</span>
-            </a>
-            <a href="#section-10" class="kpi-secondary-card" title="Jump to Cross-Asset Rates">
-                <span class="kpi-label">10Y Treasury</span>
-                <span class="kpi-val font-mono">{y10_str}</span>
-                <span class="kpi-sub text-muted font-mono">{y10_sub}</span>
-            </a>
-            <a href="#section-10" class="kpi-secondary-card" title="Jump to Credit Spreads">
-                <span class="kpi-label">HY OAS Spread</span>
-                <span class="kpi-val font-mono">{oas_str}</span>
-                <span class="kpi-sub {oas_c} font-mono">{oas_sub}</span>
-            </a>
-            <a href="#section-16" class="kpi-secondary-card" title="Jump to Volatility Risk Premium">
-                <span class="kpi-label">Vol Risk (VRP)</span>
-                <span class="kpi-val font-mono">{vrp_str}</span>
-                <span class="kpi-sub {vrp_c} font-mono">{vrp_sub}</span>
-            </a>
-            <a href="#section-10" class="kpi-secondary-card" title="Jump to Commodities">
-                <span class="kpi-label">WTI Crude</span>
-                <span class="kpi-val font-mono">{wti_str}</span>
-                <span class="kpi-sub {wti_c} font-mono">{wti_sub}</span>
-            </a>
+            {''.join(secondary_cards)}
         </div>
     </div>
     """
@@ -366,7 +539,7 @@ def render_html(
         trailing_text = f"Trailing {period.report_type}"
 
     sidebar_html = _render_sidebar(period, sections)
-    top10_html = _render_top10_ticker_strip(sections)
+    top10_html = _render_top10_ticker_strip(sections, period=period)
 
     top_bar_html = f"""
     <div class="sticky-nav-bar" id="report-nav">
@@ -400,10 +573,16 @@ def render_html(
     </header>
     """
 
+    sec_by_type = {type(s.data): s for s in sections if s.is_available and s.data is not None}
+    vix_tf_upper = (
+        "1D" if period.report_type == "daily"
+        else ("1M" if period.report_type == "monthly" else "1W")
+    )
+    vix_tf_lower = vix_tf_upper.lower()
     body_html: List[str] = []
 
     for sec in sections:
-        body_html.append(f'<section class="section-card card" id="section-{sec.section_num}">')
+        body_html.append(f'<section class="section-card card" id="section-{sec.section_num}" tabindex="-1">')
         body_html.append(f'<div class="section-header"><span class="section-num">{sec.section_num}</span><h2 class="section-title">{sec.title}</h2></div>')
 
         if not sec.is_available:
@@ -440,6 +619,40 @@ def render_html(
 
             conf_badge = f'<div class="score-sub font-mono" style="margin-top: 4px; color: var(--text-muted); font-size: 11px;">{d.confidence}</div>' if d.confidence else ''
 
+            brief_html = ""
+            brief = getattr(d, "brief", None)
+            if brief is not None:
+                import re as _re_brief
+                def _fmt_md_bold(txt: str) -> str:
+                    return _re_brief.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", txt)
+
+                things_li = "".join(f"<li>{_fmt_md_bold(t)}</li>" for t in brief.three_things)
+                if period.report_type == "weekly":
+                    brief_card_cls = "weekly-desk-card"
+                    brief_badge = "⚡ Weekly Desk Takeaway &amp; Strategy"
+                else:
+                    brief_card_cls = "morning-brief-card"
+                    brief_badge = "⚡ 30-Second Brief &amp; Bottom Line"
+                brief_html = f"""
+                <div class="{brief_card_cls}" style="margin-top: 16px; padding: 20px 24px; border-radius: 12px; background: linear-gradient(135deg, rgba(236, 164, 0, 0.13), rgba(44, 81, 76, 0.05)); border: 1.5px solid rgba(236, 164, 0, 0.55); border-left: 6px solid var(--amber-honey); box-shadow: 0 6px 18px rgba(86, 53, 30, 0.08);">
+                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">
+                        <span style="font-weight: 800; font-size: 0.95rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--amber-honey);">{brief_badge}</span>
+                        <span style="font-size: 0.95rem; font-weight: 700; color: var(--text-main);">{brief.headline_takeaway}</span>
+                    </div>
+                    <div style="margin-bottom: 14px;">
+                        <div style="font-size: 0.82rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 6px;">3 Things That Mattered</div>
+                        <ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 0.96rem; line-height: 1.52; color: var(--text-main);">
+                            {things_li}
+                        </ul>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr; gap: 10px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 0.95rem; line-height: 1.52; color: var(--text-main);">
+                        <div><strong style="color: var(--tropical-teal);">What Happened:</strong> {brief.what_happened}</div>
+                        <div><strong style="color: var(--tropical-teal);">What It Means:</strong> {brief.what_it_means}</div>
+                        <div style="padding: 10px 14px; border-radius: 8px; background: rgba(236, 164, 0, 0.14); border-left: 4px solid var(--amber-honey); font-size: 0.98rem;"><strong style="color: var(--amber-honey);">The Bottom Line:</strong> <strong>{brief.bottom_line}</strong></div>
+                    </div>
+                </div>
+                """
+
             alignment_callout_html = ""
             if getattr(d, "alignment_note", ""):
                 alignment_callout_html = f"""
@@ -452,35 +665,121 @@ def render_html(
                 </div>
                 """
 
-            body_html.append(f"""
-            <div class="verdict-banner" style="border-left-color: {banner_border};">
-                <div class="verdict-box">
-                    <span class="verdict-label">Market Regime Verdict</span>
-                    <span class="verdict-badge {v_class}">{d.verdict.upper()}</span>
+            horizon_html = ""
+            h_matrix = getattr(d, "horizon_matrix", None)
+            if h_matrix:
+                h_rows = []
+                for h in h_matrix:
+                    h_rows.append(f"""
+                    <tr>
+                        <td><strong>{h.horizon}</strong><div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">{h.audience}</div></td>
+                        <td><span class="badge badge-neutral font-bold">{h.state}</span></td>
+                        <td class="font-mono" style="font-size: 12px;">{h.key_metric}</td>
+                        <td style="font-size: 13px; line-height: 1.45;">{h.implication}</td>
+                    </tr>
+                    """)
+                horizon_html = f"""
+                <div style="margin-top: 18px;">
+                    <h4 style="font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">Multi-Horizon &amp; Cross-Strategy Synthesis</h4>
+                    <div class="table-container">
+                        <table class="report-table compact-table">
+                            <thead>
+                                <tr>
+                                    <th>Horizon &amp; Lens</th>
+                                    <th>Regime Read</th>
+                                    <th>Quantitative Anchor</th>
+                                    <th>Cross-Market Takeaway</th>
+                                </tr>
+                            </thead>
+                            <tbody>{''.join(h_rows)}</tbody>
+                        </table>
+                    </div>
                 </div>
-                <div class="score-box" style="margin-left: auto; text-align: right;">
-                    <span class="score-label">Trend Score</span>
-                    <span class="score-val font-mono">{d.normalized_score:+.2f}</span>
-                    {conf_badge}
+                """
+
+            cotd_html = ""
+            cotd = getattr(d, "chart_of_the_day", None)
+            if cotd:
+                cotd_html = f"""
+                <div class="chart-container" style="margin-top: 20px;">
+                    <h4 style="font-size: 14px; font-weight: 700; margin-bottom: 8px;">Chart of the Day: {cotd.title}</h4>
+                    <img src="{cotd.chart_path}" alt="{cotd.title}" class="report-img" style="max-width: 100%; border-radius: 6px; border: 1px solid var(--border);">
+                    <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px; font-style: italic;">{cotd.annotation}</div>
                 </div>
-            </div>
-            {alignment_callout_html}
-            {regime_callout_html}
-            <div class="summary-reasons" style="margin-top: 16px;">
-                <ul class="reasons-list">
-                    {''.join(f'<li>{r}</li>' for r in d.reasons)}
-                </ul>
-            </div>
-            <details class="methodology-note" style="margin-top: 18px;">
-                <summary>ℹ️ How this score is calculated</summary>
-                <div class="methodology-content">
-                    <p><strong>Category Weighting &amp; Caps:</strong> Evaluates 5 independent signal categories with fixed caps: Trend/Price (30%), Market Breadth (20%), Rates &amp; Macro (20%), Volatility &amp; Risk Appetite (15%), and Sentiment &amp; Positioning (15%). Correlated inputs cannot exceed their category allocation.</p>
-                    <p style="margin-top: 6px;"><strong>Continuous Gradients:</strong> Breadth and rate thresholds use continuous linear interpolation (-1.0 to +1.0) between neutral and extreme bounds rather than binary cliffs.</p>
-                    <p style="margin-top: 6px;"><strong>Divergence Gating &amp; Missing Inputs:</strong> The Trend category takes the weaker of S&amp;P 500 and Nasdaq-100 to penalize narrow single-index rallies. If an input source is temporarily unavailable, it is excluded and active category denominators are renormalized without defaulting to 0.</p>
-                    <p style="margin-top: 6px;"><strong>Regime Bands:</strong> Risk-On (&ge; +0.35), Constructive (+0.10 to +0.35), Neutral (-0.10 to +0.10), Cautious (-0.35 to -0.10), Risk-Off (&lt; -0.35).</p>
+                """
+
+            if period.report_type == "weekly" and horizon_html:
+                vis_horizon_html = f'<details class="methodology-note" style="margin-top: 18px;"><summary>Multi-Horizon &amp; Cross-Strategy Synthesis</summary>{horizon_html}</details>'
+            else:
+                vis_horizon_html = horizon_html
+
+            if period.report_type == "daily":
+                body_html.append(f"""
+                <div class="verdict-banner" style="border-left-color: {banner_border};">
+                    <div class="verdict-box">
+                        <span class="verdict-label">Market Regime Verdict</span>
+                        <span class="verdict-badge {v_class}">{d.verdict.upper()}</span>
+                    </div>
+                    <div class="score-box" style="margin-left: auto; text-align: right;">
+                        <span class="score-label">Trend Score</span>
+                        <span class="score-val font-mono">{d.normalized_score:+.2f}</span>
+                        {conf_badge}
+                    </div>
                 </div>
-            </details>
-            """)
+                {brief_html}
+                {cotd_html}
+                <details class="methodology-note" style="margin-top: 18px;">
+                    <summary>Detail &amp; Methodology</summary>
+                    <div class="methodology-content">
+                        {alignment_callout_html}
+                        {regime_callout_html}
+                        <div class="summary-reasons" style="margin-top: 16px;">
+                            <ul class="reasons-list">
+                                {''.join(f'<li>{r}</li>' for r in d.reasons)}
+                            </ul>
+                        </div>
+                        {horizon_html}
+                        <div style="margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px;">
+                            <p><strong>Category Weighting &amp; Caps:</strong> Evaluates 5 independent signal categories with fixed caps: Trend/Price (30%), Market Breadth (20%), Rates &amp; Macro (20%), Volatility &amp; Risk Appetite (15%), and Sentiment &amp; Positioning (15%). Correlated inputs cannot exceed their category allocation.</p>
+                            <p style="margin-top: 6px;"><strong>Continuous Gradients:</strong> Breadth and rate thresholds use continuous linear interpolation (-1.0 to +1.0) between neutral and extreme bounds rather than binary cliffs.</p>
+                            <p style="margin-top: 6px;"><strong>Divergence Gating &amp; Missing Inputs:</strong> The Trend category takes the weaker of S&amp;P 500 and Nasdaq-100 to penalize narrow single-index rallies. If an input source is temporarily unavailable, it is excluded and active category denominators are renormalized without defaulting to 0.</p>
+                            <p style="margin-top: 6px;"><strong>Regime Bands:</strong> Risk-On (&ge; +0.35), Constructive (+0.10 to +0.35), Neutral (-0.10 to +0.10), Cautious (-0.35 to -0.10), Risk-Off (&lt; -0.35).</p>
+                        </div>
+                    </div>
+                </details>
+                """)
+            else:
+                body_html.append(f"""
+                <div class="verdict-banner" style="border-left-color: {banner_border};">
+                    <div class="verdict-box">
+                        <span class="verdict-label">Market Regime Verdict</span>
+                        <span class="verdict-badge {v_class}">{d.verdict.upper()}</span>
+                    </div>
+                    <div class="score-box" style="margin-left: auto; text-align: right;">
+                        <span class="score-label">Trend Score</span>
+                        <span class="score-val font-mono">{d.normalized_score:+.2f}</span>
+                        {conf_badge}
+                    </div>
+                </div>
+                {brief_html}
+                {alignment_callout_html}
+                {regime_callout_html}
+                <div class="summary-reasons" style="margin-top: 16px;">
+                    <ul class="reasons-list">
+                        {''.join(f'<li>{r}</li>' for r in d.reasons)}
+                    </ul>
+                </div>
+                {vis_horizon_html}
+                <details class="methodology-note" style="margin-top: 18px;">
+                    <summary>ℹ️ How this score is calculated</summary>
+                    <div class="methodology-content">
+                        <p><strong>Category Weighting &amp; Caps:</strong> Evaluates 5 independent signal categories with fixed caps: Trend/Price (30%), Market Breadth (20%), Rates &amp; Macro (20%), Volatility &amp; Risk Appetite (15%), and Sentiment &amp; Positioning (15%). Correlated inputs cannot exceed their category allocation.</p>
+                        <p style="margin-top: 6px;"><strong>Continuous Gradients:</strong> Breadth and rate thresholds use continuous linear interpolation (-1.0 to +1.0) between neutral and extreme bounds rather than binary cliffs.</p>
+                        <p style="margin-top: 6px;"><strong>Divergence Gating &amp; Missing Inputs:</strong> The Trend category takes the weaker of S&amp;P 500 and Nasdaq-100 to penalize narrow single-index rallies. If an input source is temporarily unavailable, it is excluded and active category denominators are renormalized without defaulting to 0.</p>
+                        <p style="margin-top: 6px;"><strong>Regime Bands:</strong> Risk-On (&ge; +0.35), Constructive (+0.10 to +0.35), Neutral (-0.10 to +0.10), Cautious (-0.35 to -0.10), Risk-Off (&lt; -0.35).</p>
+                    </div>
+                </details>
+                """)
 
         # Section: What Changed (Executive Deltas vs Prior Report)
         elif isinstance(sec.data, WhatChangedData):
@@ -545,29 +844,182 @@ def render_html(
                 posture_badge_cls = "badge-red"
                 banner_border = "var(--rosy-copper)"
 
-            monthly_gate_note = """
+            macro_sec_ref = sec_by_type.get(MacroSectionData)
+            macro_ref_txt = f"Section {macro_sec_ref.section_num}" if macro_sec_ref else "macro regime signals"
+            monthly_gate_note = f"""
             <div class="alert alert-info" style="margin-top: 12px; margin-bottom: 12px;">
-                💡 <strong>Monthly Strategic Allocation Note:</strong> The Swing-Trade Exposure Gate provides tactical weekly guardrails. For long-term multi-asset allocators, macro regime signals and credit spreads (Section 17) take precedence over short-term swing stops.
+                💡 <strong>Monthly Strategic Allocation Note:</strong> This tactical regime gauge summarizes short-to-medium-term trend and volatility thresholds. For long-term multi-asset allocators, macro regime signals and credit spreads ({macro_ref_txt}) take precedence over short-term moving-average signals.
             </div>
             """ if period.report_type == "monthly" else ""
+
+            adherence_html = ""
+            if getattr(sg, "range_adherence", None) is not None:
+                adherence_html = f"""
+                <div class="alert alert-info" style="margin-top: 12px; margin-bottom: 12px;">
+                    <strong>Prior Week Model Range Adherence:</strong> {sg.range_adherence.summary_text}
+                </div>
+                """
 
             spy_20_c = "text-green font-bold" if sg.spy_20ema_pass else "text-red font-bold"
             spy_50_c = "text-green font-bold" if sg.spy_50dma_pass else "text-red font-bold"
             qqq_20_c = "text-green font-bold" if sg.qqq_20ema_pass else "text-red font-bold"
             qqq_50_c = "text-green font-bold" if sg.qqq_50dma_pass else "text-red font-bold"
 
+            triggers_html = ""
+            pt = getattr(sg, "posture_triggers", None)
+            if pt is not None:
+                triggers_html = f"""
+                <div style="margin-top: 16px; padding: 14px 18px; border-radius: 10px; background: var(--bg-card-subtle); border: 1px solid var(--border); border-left: 4px solid var(--tropical-teal);">
+                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 8px;">
+                        <span style="font-weight: 700; font-size: 0.80rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--tropical-teal);">Exposure Sizing &amp; Regime Flip Triggers</span>
+                        <span class="badge badge-neutral">{pt.target_beta_band}</span>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr; gap: 6px; font-size: 0.86rem; line-height: 1.45; color: var(--text-main);">
+                        <div><strong class="text-green">Model upgrade condition:</strong> {pt.upgrade_trigger}</div>
+                        <div><strong class="text-red">Model downgrade condition:</strong> {pt.downgrade_trigger}</div>
+                    </div>
+                </div>
+                """
+
+            risk_range_html = ""
+            rr_list = getattr(sg, "risk_ranges", None)
+            if rr_list:
+                def _dir_badge(val: str) -> str:
+                    v = (val or "NEUTRAL").upper()
+                    cls = "badge-green" if v == "BULLISH" else ("badge-red" if v == "BEARISH" else "badge-amber")
+                    return f'<span class="badge {cls}">{v}</span>'
+
+                rr_rows = []
+                for rr in rr_list:
+                    bar_w = max(4.0, min(100.0, rr.position_pct))
+                    rr_rows.append(f"""
+                    <tr>
+                        <td><strong>{rr.name}</strong> <span class="ticker-sub font-mono">{rr.symbol}</span></td>
+                        <td class="text-right font-mono font-bold">${rr.last_price:,.2f}</td>
+                        <td class="text-right font-mono text-green">${rr.range_low:,.2f}</td>
+                        <td class="text-right font-mono">${rr.pivot_20ema:,.2f}</td>
+                        <td class="text-right font-mono text-red">${rr.range_high:,.2f}</td>
+                        <td class="text-center font-mono" style="min-width: 90px;">
+                            <div style="font-size: 11px; margin-bottom: 3px;">{rr.position_pct:.0f}% <span style="color: var(--text-muted);">(ATR {rr.atr_pct:.1f}%)</span></div>
+                            <div style="height: 5px; width: 100%; background: var(--border); border-radius: 3px; overflow: hidden;">
+                                <div style="height: 100%; width: {bar_w:.0f}%; background: var(--amber-honey);"></div>
+                            </div>
+                        </td>
+                        <td class="text-center">{_dir_badge(rr.trade_dir)}</td>
+                        <td class="text-center">{_dir_badge(rr.trend_dir)}</td>
+                        <td class="text-center">{_dir_badge(rr.tail_dir)}</td>
+                    </tr>
+                    """)
+                risk_range_html = f"""
+                <div style="margin-top: 20px;">
+                    <h4 style="font-size: 0.84rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">Quantitative Risk Ranges&trade; &amp; Multi-Duration Direction (Trade / Trend / Tail)</h4>
+                    <div class="table-container">
+                        <table class="report-table compact-table">
+                            <thead>
+                                <tr>
+                                    <th>Asset</th>
+                                    <th class="text-right">Last</th>
+                                    <th class="text-right">Range Low (Support)</th>
+                                    <th class="text-right">20-EMA Pivot</th>
+                                    <th class="text-right">Range High (Resistance)</th>
+                                    <th class="text-center">Range %</th>
+                                    <th class="text-center">Trade (1&ndash;3W)</th>
+                                    <th class="text-center">Trend (3M)</th>
+                                    <th class="text-center">Tail (1Y+)</th>
+                                </tr>
+                            </thead>
+                            <tbody>{''.join(rr_rows)}</tbody>
+                        </table>
+                    </div>
+                </div>
+                """
+
+            playbook_html = ""
+            pb = getattr(sg, "catalyst_playbook", None)
+            if pb is not None:
+                pb_blocks: List[str] = []
+                pb_blocks.append(f"""
+                <div class="alert alert-info" style="margin-bottom: 12px;">
+                    <strong>Key Tactical Levels:</strong> <span class="font-mono">{pb.spy_pivot_line}</span><br>
+                    <span><strong>Desk Playbook Read:</strong> {pb.execution_takeaway}</span>
+                </div>
+                """)
+                if getattr(pb, "macro_catalysts", None):
+                    m_rows: List[str] = []
+                    for ev in pb.macro_catalysts:
+                        i_cls = "badge-red" if ev.importance == "high" else ("badge-neutral" if ev.importance == "medium" else "badge-muted")
+                        m_rows.append(f"""
+                        <tr>
+                            <td class="text-center font-mono">{ev.date}</td>
+                            <td class="text-center font-mono">{ev.time_et}</td>
+                            <td><strong>{ev.title}</strong></td>
+                            <td class="text-center"><span class="badge {i_cls}">{ev.importance.upper()}</span></td>
+                            <td class="text-right font-mono">{_fmt_ev_value(ev.previous, ev.unit)}</td>
+                            <td class="text-right font-mono font-bold">{_fmt_ev_value(ev.forecast, ev.unit)}</td>
+                        </tr>
+                        """)
+                    pb_blocks.append(f"""
+                    <div class="table-container" style="margin-bottom: 12px;">
+                        <table class="report-table compact-table">
+                            <thead>
+                                <tr>
+                                    <th class="text-center">Date</th>
+                                    <th class="text-center">Time (ET)</th>
+                                    <th>Imminent Macro Catalyst</th>
+                                    <th class="text-center">Impact</th>
+                                    <th class="text-right">Prior</th>
+                                    <th class="text-right">Consensus</th>
+                                </tr>
+                            </thead>
+                            <tbody>{''.join(m_rows)}</tbody>
+                        </table>
+                    </div>
+                    """)
+                if getattr(pb, "earnings_tonight_tomorrow", None):
+                    e_rows = "".join(
+                        f'<tr><td><strong>{er["symbol"]}</strong></td><td>{er["name"]}</td>'
+                        f'<td class="text-center font-mono">{er["date"]}</td>'
+                        f'<td class="text-center"><span class="badge badge-neutral">{er["timing"]}</span></td></tr>'
+                        for er in pb.earnings_tonight_tomorrow
+                    )
+                    pb_blocks.append(f"""
+                    <div class="table-container" style="margin-bottom: 12px;">
+                        <table class="report-table compact-table">
+                            <thead>
+                                <tr>
+                                    <th>Symbol</th>
+                                    <th>Notable S&amp;P 500 Earnings (AMC / BMO)</th>
+                                    <th class="text-center">Date</th>
+                                    <th class="text-center">Session Timing</th>
+                                </tr>
+                            </thead>
+                            <tbody>{e_rows}</tbody>
+                        </table>
+                    </div>
+                    """)
+                if getattr(pb, "featured_scenario", None) is not None:
+                    pb_blocks.append(_render_scenario_matrix_html(pb.featured_scenario))
+
+                playbook_html = f"""
+                <div style="margin-top: 20px;">
+                    <h4 style="font-size: 0.84rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">Next 48H Catalyst Playbook (Through {pb.lookahead_date})</h4>
+                    {''.join(pb_blocks)}
+                </div>
+                """
+
             body_html.append(f"""
             <div class="verdict-banner" style="border-left-color: {banner_border};">
                 <div class="verdict-box">
-                    <span class="verdict-label">Execution Posture</span>
+                    <span class="verdict-label">Market Posture</span>
                     <span class="verdict-badge {posture_badge_cls}">{sg.posture}</span>
                 </div>
                 <div style="flex: 1; padding-left: 16px;">
-                    <div style="font-weight: 500; font-size: 0.85rem;">{sg.triggered_rule}</div>
-                    {f'<div style="font-size: 0.78rem; color: rgba(255,255,255,0.7); margin-top: 4px;">{sg.execution_guidance}</div>' if sg.execution_guidance else ''}
+                    <div style="font-weight: 500; font-size: 0.98rem;">{sg.triggered_rule}</div>
+                    {f'<div style="font-size: 0.9rem; color: rgba(255,255,255,0.78); margin-top: 4px;">{sg.execution_guidance}</div>' if sg.execution_guidance else ''}
                 </div>
             </div>
             {monthly_gate_note}
+            {adherence_html}
 
             <div class="table-container">
                 <table class="report-table">
@@ -610,9 +1062,9 @@ def render_html(
 
             <div class="vix-grid" style="margin-top: 18px;">
                 <div class="vix-metric">
-                    <span class="vix-label">VIX LEVEL &amp; 5D TREND</span>
+                    <span class="vix-label">VIX LEVEL &amp; {vix_tf_upper} CHANGE</span>
                     <span class="vix-val font-mono">{sg.vix_level:.2f}</span>
-                    <span class="vix-sub">5d Δ: {_fmt_delta(sg.vix_5d_trend)} pts</span>
+                    <span class="vix-sub">{vix_tf_lower} Δ: {_fmt_delta(sg.vix_5d_trend)} pts</span>
                 </div>
                 <div class="vix-metric">
                     <span class="vix-label">VOL TERM STRUCTURE</span>
@@ -631,15 +1083,20 @@ def render_html(
                 </div>
             </div>
 
+            {triggers_html}
+            {risk_range_html}
+
+            {playbook_html}
+
             <details class="methodology-note" style="margin-top: 16px;">
-                <summary>ℹ️ How the Swing-Trade Posture is determined</summary>
+                <summary>ℹ️ How the Market Regime Posture is determined</summary>
                 <div class="methodology-content">
-                    <p>The Swing-Trade Regime Gate evaluates benchmark index moving averages, implied volatility, and market breadth to establish systematic quantitative posture thresholds:</p>
+                    <p>The Market Regime Model evaluates benchmark index moving averages, implied volatility, and market breadth to classify quantitative risk environments:</p>
                     <ul style="padding-left: 18px; margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
-                        <li><strong>FULL:</strong> SPY &amp; QQQ both above rising 20-EMA, VIX &lt; 20.0 in contango, and &gt; 50% of stocks &gt; 50-DMA. Favorable broad-market expansion environment.</li>
-                        <li><strong>REDUCED:</strong> Either index below 20-EMA or VIX in 20.0–25.0 cautious zone. Measured exposure profile under consolidating benchmark averages.</li>
-                        <li><strong>SELECTIVE:</strong> VIX &gt; 25.0, breadth &lt; 40%, or key moving average divergences. Restrictive exposure profile favoring relative strength divergence.</li>
-                        <li><strong>DEFENSIVE:</strong> Both indices below 50-DMA or acute systemic distress. High-risk distribution regime with benchmark moving averages broken.</li>
+                        <li><strong>FULL (Tier 1 &mdash; Expansion):</strong> SPY &amp; QQQ both above rising 20-EMA, VIX &lt; 20.0 in contango, and &gt; 50% of stocks &gt; 50-DMA. Broad-market risk-on expansion environment.</li>
+                        <li><strong>REDUCED (Tier 2 &mdash; Measured):</strong> Either index below 20-EMA or VIX in 20.0–25.0 cautious zone. Consolidating benchmark averages with primary 50-DMA support intact.</li>
+                        <li><strong>SELECTIVE (Tier 3 &mdash; Selective):</strong> VIX &gt; 25.0, breadth &lt; 40%, or key moving average divergences. Dispersed market favoring relative-strength leadership over broad beta.</li>
+                        <li><strong>DEFENSIVE (Tier 4 &mdash; Defensive):</strong> Both indices below 50-DMA or acute systemic distress. High-risk distribution regime with primary benchmark averages broken.</li>
                     </ul>
                 </div>
             </details>
@@ -662,17 +1119,33 @@ def render_html(
                 </tr>
                 """)
             val_card_html = ""
-            if getattr(snap_data, "valuation", None):
+            if getattr(snap_data, "valuation", None) and snap_data.valuation.forward_pe is not None:
                 v = snap_data.valuation
-                pe_disp = f"{v.forward_pe:.2f}x" if v.forward_pe is not None else '<span class="text-muted font-mono">n/a</span>'
-                nom_disp = f"{v.nominal_erp_bps:+.1f} bps" if v.nominal_erp_bps is not None else '<span class="text-muted font-mono">n/a</span>'
-                real_disp = f"{v.real_erp_bps:+.1f} bps" if v.real_erp_bps is not None else '<span class="text-muted font-mono">n/a</span>'
+                pe_disp = f"{v.forward_pe:.2f}x"
+                nom_disp = f"{v.nominal_erp_bps:+.1f} bps" if v.nominal_erp_bps is not None else '<span class="text-muted font-mono">—</span>'
+                real_disp = f"{v.real_erp_bps:+.1f} bps" if v.real_erp_bps is not None else '<span class="text-muted font-mono">—</span>'
+                trend_disp = f' &bull; Forward EPS Trend: <span class="font-mono font-bold">{v.eps_revision_trend}</span>' if v.eps_revision_trend and v.eps_revision_trend != "n/a (source unavailable)" else ""
                 val_card_html = f"""
                 <div class="note-box" style="margin-top: 12px;">
                     <strong>S&amp;P 500 Valuation vs. Rates:</strong> Forward P/E: <span class="font-mono font-bold">{pe_disp}</span> &bull; 
                     Nominal ERP: <span class="font-mono font-bold">{nom_disp}</span> &bull; 
-                    Real ERP: <span class="font-mono font-bold">{real_disp}</span> &bull; 
-                    Forward EPS Trend: <span class="font-mono font-bold">{v.eps_revision_trend}</span>
+                    Real ERP: <span class="font-mono font-bold">{real_disp}</span>{trend_disp}
+                </div>
+                """
+
+            extra_lines_html = ""
+            if getattr(snap_data, "sector_line", None) or getattr(snap_data, "cross_asset_line", None):
+                parts = []
+                import re as _re_idx
+                if getattr(snap_data, "sector_line", None):
+                    sl_clean = _re_idx.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", snap_data.sector_line).replace('\\$', '$')
+                    parts.append(f'<div style="font-size: 0.85rem; line-height: 1.5; color: var(--text-main); margin-bottom: 6px;">{sl_clean}</div>')
+                if getattr(snap_data, "cross_asset_line", None):
+                    cal_clean = _re_idx.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", snap_data.cross_asset_line).replace('\\$', '$')
+                    parts.append(f'<div style="font-size: 0.85rem; line-height: 1.5; color: var(--text-main);">{cal_clean}</div>')
+                extra_lines_html = f"""
+                <div class="note-box" style="margin-top: 12px; padding: 12px 16px; border-radius: 8px; background: rgba(0,0,0,0.02); border: 1px solid var(--border);">
+                    {''.join(parts)}
                 </div>
                 """
 
@@ -695,6 +1168,7 @@ def render_html(
                 </table>
             </div>
             {val_card_html}
+            {extra_lines_html}
             """)
 
 
@@ -757,7 +1231,7 @@ def render_html(
                 <div class="vix-metric">
                     <span class="vix-label">VIX LEVEL</span>
                     <span class="vix-val font-mono">{vd.current_level:.2f}</span>
-                    <span class="vix-sub">Previous: {vd.prev_level:.2f}</span>
+                    <span class="vix-sub">Previous: {vd.prev_level:.2f}{f' &bull; 1Y Rank: <strong>{format_percentile_ordinal(vd.vix_pctile_1y)}</strong>' if getattr(vd, 'vix_pctile_1y', None) is not None else ''}</span>
                 </div>
                 <div class="vix-metric">
                     <span class="vix-label">PERIOD CHANGE</span>
@@ -775,12 +1249,108 @@ def render_html(
                     <span class="vix-sub">Intra-period range</span>
                 </div>
                 <div class="vix-metric">
-                    <span class="vix-label">VOLATILITY REGIME</span>
+                    <div class="vix-header">
+                        <span class="vix-label">VOLATILITY REGIME</span>
+                        {_render_toggletip("tip-vix-regime", vd.regime_description, "Volatility regime details")}
+                    </div>
                     <span class="badge {regime_class}">{vd.regime.upper()}</span>
-                    <p class="vix-desc">{vd.regime_description}</p>
                 </div>
             </div>
             """)
+
+            has_surface = any(
+                getattr(vd, attr, None) is not None
+                for attr in ("vix_9d", "vix_3m", "vix_6m", "vvix_level", "skew_level", "realized_vol_20d")
+            )
+            if has_surface:
+                curve_badge = "badge-bullish" if (getattr(vd, "ratio_vix_3m", None) is not None and vd.ratio_vix_3m < 0.95) else ("badge-bearish" if (getattr(vd, "ratio_vix_3m", None) is not None and vd.ratio_vix_3m > 1.02) else "badge-neutral")
+                vvix_badge = "badge-bullish" if (getattr(vd, "vvix_level", None) is not None and vd.vvix_level <= 105.0) else "badge-bearish"
+                skew_badge = "badge-neutral" if (getattr(vd, "skew_level", None) is not None and vd.skew_level <= 145.0) else "badge-bearish"
+                vrp_badge = "badge-bullish" if (getattr(vd, "vrp_20d", None) is not None and vd.vrp_20d >= 2.0) else ("badge-bearish" if (getattr(vd, "vrp_20d", None) is not None and vd.vrp_20d <= -2.0) else "badge-neutral")
+
+                tenor_html_bits = []
+                if getattr(vd, "vix_9d", None) is not None:
+                    tenor_html_bits.append(f"9D: {vd.vix_9d:.2f}")
+                tenor_html_bits.append(f"1M: {vd.current_level:.2f}")
+                if getattr(vd, "vix_3m", None) is not None:
+                    tenor_html_bits.append(f"3M: {vd.vix_3m:.2f}")
+                if getattr(vd, "vix_6m", None) is not None:
+                    tenor_html_bits.append(f"6M: {vd.vix_6m:.2f}")
+
+                surface_cards = []
+                if getattr(vd, "ratio_vix_3m", None) is not None or getattr(vd, "vix_9d", None) is not None:
+                    slope_sub = f"9D/1M: {vd.ratio_9d_vix:.3f}" if getattr(vd, "ratio_9d_vix", None) is not None else ""
+                    s3_sub = f"3M–1M: {vd.term_slope_pts:+.2f} pts" if getattr(vd, "term_slope_pts", None) is not None else ""
+                    surface_cards.append(f"""
+                    <div class="vix-metric">
+                        <div class="vix-header">
+                            <span class="vix-label">TERM STRUCTURE (9D / 1M / 3M / 6M)</span>
+                            {_render_toggletip("tip-vix-term", " • ".join([p for p in (slope_sub, s3_sub) if p]), "Term structure details")}
+                        </div>
+                        <span class="vix-val font-mono">{f"{vd.ratio_vix_3m:.3f}" if vd.ratio_vix_3m is not None else f"{vd.ratio_9d_vix:.3f}"}</span>
+                        <span class="vix-sub">{" | ".join(tenor_html_bits)}</span>
+                        <div style="margin-top: 6px;"><span class="badge {curve_badge}">{(vd.term_structure_label or "SURFACE").upper()}</span></div>
+                    </div>
+                    """)
+                if getattr(vd, "vvix_level", None) is not None:
+                    vv_sub = f"&Delta; {_fmt_delta(vd.vvix_change)} pts (Prev: {vd.vvix_prev:.2f})" if (vd.vvix_change is not None and vd.vvix_prev is not None) else "CBOE Vol-of-Vol"
+                    if getattr(vd, "vvix_pctile_1y", None) is not None:
+                        vv_sub += f" &bull; 1Y: <strong>{format_percentile_ordinal(vd.vvix_pctile_1y)}</strong>"
+                    surface_cards.append(f"""
+                    <div class="vix-metric">
+                        <div class="vix-header">
+                            <span class="vix-label">CBOE VVIX (VOL-OF-VOL)</span>
+                            {_render_toggletip("tip-vix-vvix", "Implied volatility of 30-day VIX options (&gt;105 signals elevated tail convexity bid).", "VVIX details")}
+                        </div>
+                        <span class="vix-val font-mono">{vd.vvix_level:.2f}</span>
+                        <span class="vix-sub">{vv_sub}</span>
+                        <div style="margin-top: 6px;"><span class="badge {vvix_badge}">{vd.vvix_regime.upper()}</span></div>
+                    </div>
+                    """)
+                if getattr(vd, "skew_level", None) is not None:
+                    sk_sub = f"&Delta; {_fmt_delta(vd.skew_change)} pts (Prev: {vd.skew_prev:.2f})" if (vd.skew_change is not None and vd.skew_prev is not None) else "CBOE Tail Skew"
+                    if getattr(vd, "skew_pctile_1y", None) is not None:
+                        sk_sub += f" &bull; 1Y: <strong>{format_percentile_ordinal(vd.skew_pctile_1y)}</strong>"
+                    surface_cards.append(f"""
+                    <div class="vix-metric">
+                        <div class="vix-header">
+                            <span class="vix-label">CBOE SKEW INDEX</span>
+                            {_render_toggletip("tip-vix-skew", "Out-of-the-money S&amp;P 500 put tail demand (&gt;145 indicates heavy crash hedging).", "SKEW details")}
+                        </div>
+                        <span class="vix-val font-mono">{vd.skew_level:.2f}</span>
+                        <span class="vix-sub">{sk_sub}</span>
+                        <div style="margin-top: 6px;"><span class="badge {skew_badge}">{vd.skew_regime.upper()}</span></div>
+                    </div>
+                    """)
+                if getattr(vd, "realized_vol_20d", None) is not None:
+                    rv_bits = []
+                    if getattr(vd, "realized_vol_10d", None) is not None:
+                        rv_bits.append(f"10D: {vd.realized_vol_10d:.1f}%")
+                    rv_bits.append(f"20D: {vd.realized_vol_20d:.1f}%")
+                    if getattr(vd, "realized_vol_60d", None) is not None:
+                        rv_bits.append(f"60D: {vd.realized_vol_60d:.1f}%")
+                    vrp_txt = f"{vd.vrp_20d:+.2f} pts" if getattr(vd, "vrp_20d", None) is not None else "—"
+                    vrp_pct_badge = f" &bull; 1Y: {format_percentile_ordinal(vd.vrp_pctile_1y)}" if getattr(vd, "vrp_pctile_1y", None) is not None else ""
+                    surface_cards.append(f"""
+                    <div class="vix-metric">
+                        <div class="vix-header">
+                            <span class="vix-label">REALIZED VOL CONE &amp; 20D VRP</span>
+                            {_render_toggletip("tip-vix-vrp", "Trailing S&amp;P 500 realized volatility cone vs. spot 1M implied volatility.", "20D VRP details")}
+                        </div>
+                        <span class="vix-val font-mono">{vrp_txt}</span>
+                        <span class="vix-sub">{" | ".join(rv_bits)}</span>
+                        <div style="margin-top: 6px;"><span class="badge {vrp_badge}">VIX MINUS 20D REALIZED{vrp_pct_badge}</span></div>
+                    </div>
+                    """)
+                if surface_cards:
+                    synth_html = f'<p style="font-size: 13px; color: var(--text-muted); margin-top: 10px;">🧭 {vd.surface_synthesis}</p>' if getattr(vd, "surface_synthesis", "") else ""
+                    body_html.append(f"""
+                    <h3 class="sub-title" style="margin-top: 20px;">Volatility Term Structure &amp; Tail Risk Surface</h3>
+                    <div class="vix-grid" style="margin-top: 10px;">
+                        {''.join(surface_cards)}
+                    </div>
+                    {synth_html}
+                    """)
 
             if charts:
                 body_html.append(_render_chart_html(charts.get("vix_regime")))
@@ -791,9 +1361,9 @@ def render_html(
                 <div class="methodology-content">
                     <p><strong>Regime Classification:</strong> Implied volatility boundaries derived from CBOE VIX pricing:</p>
                     <ul style="padding-left: 18px; margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
-                        <li><strong>&lt; 16.5 Low / Complacent:</strong> Favorable conditions for multi-day swing breakout setups with minimal overnight gap hazard.</li>
+                        <li><strong>&lt; 16.5 Low / Complacent:</strong> Calm implied volatility backdrop with supportive trend-following conditions and low overnight gap risk.</li>
                         <li><strong>16.5 – 20.0 Normal:</strong> Standard historical distribution; typical 1&sigma; daily moves (~1.0% to 1.25%).</li>
-                        <li><strong>20.0 – 26.0 Elevated / Caution:</strong> Increased hedging demand, choppy rotational intraday swings, and wider bid-ask spreads.</li>
+                        <li><strong>20.0 – 26.0 Elevated / Caution:</strong> Increased hedging demand, heightened cross-asset rotation, and wider trading ranges.</li>
                         <li><strong>&gt; 26.0 High Fear:</strong> Acute market distress, elevated overnight gap hazard, and sharp correlation spikes across assets.</li>
                     </ul>
                 </div>
@@ -838,35 +1408,45 @@ def render_html(
             """)
 
 
-            # 2. Standing Macro Dashboard (latest values, Stage 3: 3.1)
-            if getattr(m_data, "standing_dashboard", None):
-                if period.report_type == "daily":
-                    cpi_row = next((r for r in m_data.standing_dashboard if "CPI" in r.indicator and "YoY" in r.indicator), None)
-                    pce_row = next((r for r in m_data.standing_dashboard if "Core PCE" in r.indicator), None)
-                    pay_row = next((r for r in m_data.standing_dashboard if "Nonfarm" in r.indicator or "Payrolls" in r.indicator), None)
-                    un_row = next((r for r in m_data.standing_dashboard if "Unemployment" in r.indicator), None)
-                    gdp_row = next((r for r in m_data.standing_dashboard if "GDP" in r.indicator), None)
-
-                    anchors = []
-                    if cpi_row:
-                        anchors.append(f'CPI YoY <span class="font-mono font-bold">{cpi_row.latest_value}</span>')
-                    if pce_row:
-                        anchors.append(f'Core PCE YoY <span class="font-mono font-bold">{pce_row.latest_value}</span>')
-                    if pay_row:
-                        anchors.append(f'Payrolls <span class="font-mono font-bold">{pay_row.latest_value}</span>')
-                    if un_row:
-                        anchors.append(f'Unemployment <span class="font-mono font-bold">{un_row.latest_value}</span>')
-                    if gdp_row:
-                        anchors.append(f'Real GDP <span class="font-mono font-bold">{gdp_row.latest_value}</span>')
-                    anchor_str = " &bull; ".join(anchors) if anchors else "Inflation and labor anchors stable"
-
-                    body_html.append(f"""
-                    <h3 class="sub-title">Macro Dashboard (latest values)</h3>
-                    <div style="padding: 14px 18px; border-radius: 8px; background: var(--bg-card-subtle); border-left: 4px solid var(--primary); margin-bottom: 20px;">
-                        <p style="font-size: 13px; margin: 0; line-height: 1.5;">ℹ️ <strong>Standing Baseline:</strong> No major macro prints released on this session. Key anchors: {anchor_str}. <span class="text-muted">The complete 16-indicator multi-month tracking matrix and release cadence are published in the Weekly &amp; Monthly reports.</span></p>
-                    </div>
+            cycle_dash_html = ""
+            if getattr(m_data, "cycle_dashboard", None):
+                c_rows = []
+                for p in m_data.cycle_dashboard:
+                    sig_cls = "badge-green" if any(w in p.regime_signal.lower() for w in ("expansion", "easing", "supportive")) else ("badge-red" if any(w in p.regime_signal.lower() for w in ("restrictive", "cooling", "tightening", "contraction")) else "badge-neutral")
+                    c_rows.append(f"""
+                    <tr>
+                        <td><strong>{p.pillar}</strong></td>
+                        <td class="font-mono font-bold">{p.anchor_metric}</td>
+                        <td class="text-center font-mono font-bold">{p.trajectory_3m}</td>
+                        <td style="font-size: 13px;">{p.percentile_context}</td>
+                        <td class="text-center"><span class="badge {sig_cls}">{p.regime_signal}</span></td>
+                    </tr>
                     """)
-                else:
+                cycle_dash_html = f"""
+                <h3 class="sub-title">4-Pillar Macro Cycle Dashboard</h3>
+                <p class="table-caption">Macro regime trajectory across Growth, Inflation, Labor, and Liquidity &amp; Credit with 3-month momentum and historical context.</p>
+                <div class="table-container">
+                    <table class="report-table compact-table">
+                        <thead>
+                            <tr>
+                                <th>Macro Pillar</th>
+                                <th>Key Anchor Metric</th>
+                                <th class="text-center">3M Trajectory</th>
+                                <th>Historical Context</th>
+                                <th class="text-center">Cycle Regime Signal</th>
+                            </tr>
+                        </thead>
+                        <tbody>{''.join(c_rows)}</tbody>
+                    </table>
+                </div>
+                """
+
+            if period.report_type == "weekly":
+                if cycle_dash_html:
+                    body_html.append(cycle_dash_html)
+
+                dash_content = []
+                if getattr(m_data, "standing_dashboard", None):
                     dash_rows = []
                     for row in m_data.standing_dashboard:
                         if "Rising" in row.direction_3m:
@@ -883,7 +1463,7 @@ def render_html(
                             <td class="text-right font-mono font-bold">{row.latest_value}</td>
                             <td class="text-right font-mono text-muted">{row.prior_value}</td>
                             <td class="text-center font-mono" style="{dir_style}">{row.direction_3m}</td>
-                            <td class="text-center"><span class="badge badge-neutral" style="font-size: 11px;">{row.plain_label}</span></td>
+                            <td class="text-center"><span class="badge badge-neutral">{row.plain_label}</span></td>
                             <td class="text-center font-mono" style="font-size: 12px;">{row.reference_period}</td>
                             <td class="text-center font-mono" style="font-size: 12px;">{row.release_date}</td>
                             <td class="text-center font-mono" style="font-size: 12px; color: var(--color-primary);">{row.next_release_date}</td>
@@ -891,7 +1471,7 @@ def render_html(
                         </tr>
                         """)
 
-                    body_html.append(f"""
+                    dash_content.append(f"""
                     <h3 class="sub-title">Macro Dashboard (latest values)</h3>
                     <p class="table-caption">Standing macroeconomic indicators across Inflation, Labor, and Economic Activity with 3-month trajectories and scheduled catalyst cadence.</p>
                     <div class="table-container">
@@ -915,42 +1495,163 @@ def render_html(
                     </div>
                     """)
 
-            # 3. Market-Based Indicators Table (Stage 3: 3.1)
-            if getattr(m_data, "market_indicators", None):
-                mkt_rows = []
-                for row in m_data.market_indicators:
-                    mkt_rows.append(f"""
-                    <tr>
-                        <td><strong>{row.indicator}</strong></td>
-                        <td class="text-center font-mono" style="font-size: 12px;">{row.series_id}</td>
-                        <td class="text-right font-mono font-bold">{row.latest_level}</td>
-                        <td class="text-right font-mono text-muted">{row.prior_level}</td>
-                        <td class="text-right font-mono font-bold">{row.period_change}</td>
-                        <td class="text-center"><span class="badge badge-neutral" style="font-size: 11px;">{row.trend_3m}</span></td>
-                        <td><span class="text-muted" style="font-size: 11px;">{row.source}</span></td>
-                    </tr>
+                if getattr(m_data, "market_indicators", None):
+                    mkt_rows = []
+                    for row in m_data.market_indicators:
+                        mkt_rows.append(f"""
+                        <tr>
+                            <td><strong>{row.indicator}</strong></td>
+                            <td class="text-center font-mono" style="font-size: 12px;">{row.series_id}</td>
+                            <td class="text-right font-mono font-bold">{row.latest_level}</td>
+                            <td class="text-right font-mono text-muted">{row.prior_level}</td>
+                            <td class="text-right font-mono font-bold">{row.period_change}</td>
+                            <td class="text-center"><span class="badge badge-neutral">{row.trend_3m}</span></td>
+                            <td><span class="text-muted" style="font-size: 11px;">{row.source}</span></td>
+                        </tr>
+                        """)
+
+                    dash_content.append(f"""
+                    <h3 class="sub-title" style="margin-top: 24px;">Market-Based Indicators</h3>
+                    <p class="table-caption">Daily financial series reflecting credit spreads, TIPS real yields, breakeven inflation, and term structure slopes.</p>
+                    <div class="table-container">
+                        <table class="report-table compact-table">
+                            <thead>
+                                <tr>
+                                    <th>Indicator</th>
+                                    <th class="text-center">Series ID</th>
+                                    <th class="text-right">Latest Level</th>
+                                    <th class="text-right">Prior Level</th>
+                                    <th class="text-right">Period &Delta;</th>
+                                    <th class="text-center">Regime / Status</th>
+                                    <th>Source</th>
+                                </tr>
+                            </thead>
+                            <tbody>{''.join(mkt_rows)}</tbody>
+                        </table>
+                    </div>
                     """)
 
-                body_html.append(f"""
-                <h3 class="sub-title" style="margin-top: 24px;">Market-Based Indicators</h3>
-                <p class="table-caption">Daily financial series reflecting credit spreads, TIPS real yields, breakeven inflation, and term structure slopes.</p>
-                <div class="table-container">
-                    <table class="report-table compact-table">
-                        <thead>
+                if dash_content:
+                    body_html.append(f"""
+                    <details style="margin-top: 18px;">
+                        <summary>Full Macro Indicator &amp; Historical Appendix</summary>
+                        {''.join(dash_content)}
+                    </details>
+                    """)
+            else:
+                # 2. Standing Macro Dashboard (latest values, Stage 3: 3.1)
+                if getattr(m_data, "standing_dashboard", None):
+                    if period.report_type == "daily":
+                        cpi_row = next((r for r in m_data.standing_dashboard if "CPI" in r.indicator and "YoY" in r.indicator), None)
+                        pce_row = next((r for r in m_data.standing_dashboard if "Core PCE" in r.indicator), None)
+                        pay_row = next((r for r in m_data.standing_dashboard if "Nonfarm" in r.indicator or "Payrolls" in r.indicator), None)
+                        un_row = next((r for r in m_data.standing_dashboard if "Unemployment" in r.indicator), None)
+                        gdp_row = next((r for r in m_data.standing_dashboard if "GDP" in r.indicator), None)
+
+                        anchors = []
+                        if cpi_row:
+                            anchors.append(f'CPI YoY <span class="font-mono font-bold">{cpi_row.latest_value}</span>')
+                        if pce_row:
+                            anchors.append(f'Core PCE YoY <span class="font-mono font-bold">{pce_row.latest_value}</span>')
+                        if pay_row:
+                            anchors.append(f'Payrolls <span class="font-mono font-bold">{pay_row.latest_value}</span>')
+                        if un_row:
+                            anchors.append(f'Unemployment <span class="font-mono font-bold">{un_row.latest_value}</span>')
+                        if gdp_row:
+                            anchors.append(f'Real GDP <span class="font-mono font-bold">{gdp_row.latest_value}</span>')
+                        anchor_str = " &bull; ".join(anchors) if anchors else "Inflation and labor anchors stable"
+
+                        body_html.append(f"""
+                        <h3 class="sub-title">Macro Dashboard (latest values)</h3>
+                        <div style="padding: 14px 18px; border-radius: 8px; background: var(--bg-card-subtle); border-left: 4px solid var(--primary); margin-bottom: 20px;">
+                            <p style="font-size: 13px; margin: 0; line-height: 1.5;">ℹ️ <strong>Standing Baseline:</strong> No major macro prints released on this session. Key anchors: {anchor_str}. <span class="text-muted">The complete 16-indicator multi-month tracking matrix and release cadence are published in the Weekly &amp; Monthly reports.</span></p>
+                        </div>
+                        """)
+                    else:
+                        dash_rows = []
+                        for row in m_data.standing_dashboard:
+                            if "Rising" in row.direction_3m:
+                                dir_style = "color: #0284c7; font-weight: bold;"
+                            elif "Falling" in row.direction_3m:
+                                dir_style = "color: #d97706; font-weight: bold;"
+                            else:
+                                dir_style = "color: var(--text-muted);"
+
+                            dash_rows.append(f"""
                             <tr>
-                                <th>Indicator</th>
-                                <th class="text-center">Series ID</th>
-                                <th class="text-right">Latest Level</th>
-                                <th class="text-right">Prior Level</th>
-                                <th class="text-right">Period &Delta;</th>
-                                <th class="text-center">Regime / Status</th>
-                                <th>Source</th>
+                                <td><strong>{row.indicator}</strong></td>
+                                <td><span class="text-muted" style="font-size: 12px;">{row.category}</span></td>
+                                <td class="text-right font-mono font-bold">{row.latest_value}</td>
+                                <td class="text-right font-mono text-muted">{row.prior_value}</td>
+                                <td class="text-center font-mono" style="{dir_style}">{row.direction_3m}</td>
+                                <td class="text-center"><span class="badge badge-neutral">{row.plain_label}</span></td>
+                                <td class="text-center font-mono" style="font-size: 12px;">{row.reference_period}</td>
+                                <td class="text-center font-mono" style="font-size: 12px;">{row.release_date}</td>
+                                <td class="text-center font-mono" style="font-size: 12px; color: var(--color-primary);">{row.next_release_date}</td>
+                                <td><span class="text-muted" style="font-size: 11px;">{row.source}</span></td>
                             </tr>
-                        </thead>
-                        <tbody>{''.join(mkt_rows)}</tbody>
-                    </table>
-                </div>
-                """)
+                            """)
+
+                        body_html.append(f"""
+                        <h3 class="sub-title">Macro Dashboard (latest values)</h3>
+                        <p class="table-caption">Standing macroeconomic indicators across Inflation, Labor, and Economic Activity with 3-month trajectories and scheduled catalyst cadence.</p>
+                        <div class="table-container">
+                            <table class="report-table compact-table">
+                                <thead>
+                                    <tr>
+                                        <th>Indicator</th>
+                                        <th>Category</th>
+                                        <th class="text-right">Latest Value</th>
+                                        <th class="text-right">Prior Value</th>
+                                        <th class="text-center">3M Direction</th>
+                                        <th class="text-center">Signal Interpretation</th>
+                                        <th class="text-center">Ref. Period</th>
+                                        <th class="text-center">Release Date</th>
+                                        <th class="text-center">Next Release</th>
+                                        <th>Source</th>
+                                    </tr>
+                                </thead>
+                                <tbody>{''.join(dash_rows)}</tbody>
+                            </table>
+                        </div>
+                        """)
+
+                # 3. Market-Based Indicators Table (Stage 3: 3.1)
+                if getattr(m_data, "market_indicators", None):
+                    mkt_rows = []
+                    for row in m_data.market_indicators:
+                        mkt_rows.append(f"""
+                        <tr>
+                            <td><strong>{row.indicator}</strong></td>
+                            <td class="text-center font-mono" style="font-size: 12px;">{row.series_id}</td>
+                            <td class="text-right font-mono font-bold">{row.latest_level}</td>
+                            <td class="text-right font-mono text-muted">{row.prior_level}</td>
+                            <td class="text-right font-mono font-bold">{row.period_change}</td>
+                            <td class="text-center"><span class="badge badge-neutral">{row.trend_3m}</span></td>
+                            <td><span class="text-muted" style="font-size: 11px;">{row.source}</span></td>
+                        </tr>
+                        """)
+
+                    body_html.append(f"""
+                    <h3 class="sub-title" style="margin-top: 24px;">Market-Based Indicators</h3>
+                    <p class="table-caption">Daily financial series reflecting credit spreads, TIPS real yields, breakeven inflation, and term structure slopes.</p>
+                    <div class="table-container">
+                        <table class="report-table compact-table">
+                            <thead>
+                                <tr>
+                                    <th>Indicator</th>
+                                    <th class="text-center">Series ID</th>
+                                    <th class="text-right">Latest Level</th>
+                                    <th class="text-right">Prior Level</th>
+                                    <th class="text-right">Period &Delta;</th>
+                                    <th class="text-center">Regime / Status</th>
+                                    <th>Source</th>
+                                </tr>
+                            </thead>
+                            <tbody>{''.join(mkt_rows)}</tbody>
+                        </table>
+                    </div>
+                    """)
 
             # 4. Key Economic Releases (this period)
             body_html.append("""
@@ -965,9 +1666,9 @@ def render_html(
                         )
                     )
                     act_val = _fmt_macro_val(r.actual, r.unit)
-                    fc_val = _fmt_macro_val(r.forecast, r.unit) if r.forecast is not None else '<span class="text-muted font-mono">n/a (no consensus)</span>'
+                    fc_val = _fmt_macro_val(r.forecast, r.unit) if r.forecast is not None else '<span class="text-muted font-mono">—</span>'
                     pr_val = _fmt_macro_val(r.previous, r.unit)
-                    s_label = r.surprise_flag.upper() if r.surprise_flag not in ("n/a", "n/a (no consensus)", "n/a (unpolled)") else "NO CONSENSUS"
+                    s_label = r.surprise_flag.upper() if r.surprise_flag not in ("n/a", "n/a (no consensus)", "n/a (unpolled)") else "—"
 
                     rel_rows.append(f"""
                     <tr>
@@ -1003,36 +1704,118 @@ def render_html(
                 rot_badge = "badge-bullish" if intel.rotation.spread > 1.5 else ("badge-neutral" if intel.rotation.spread >= -1.5 else "badge-bearish")
                 quad_badge = "badge-bullish" if "Goldilocks" in intel.quadrant else ("badge-neutral" if "Reflation" in intel.quadrant else "badge-bearish")
 
-                body_html.append(f"""
-                <h3 class="sub-title" style="margin-top: 24px;">Forward-Looking Financial Conditions &amp; Risk Premiums</h3>
+                fsi_v = intel.credit.financial_stress_index
+                fsi_badge_cls = "badge-green" if (fsi_v is not None and fsi_v < 0.0) else ("badge-red" if (fsi_v is not None and fsi_v >= 1.0) else "badge-neutral")
+                fsi_badge_txt = "LOW STRESS" if (fsi_v is not None and fsi_v < 0.0) else ("HIGH STRESS" if (fsi_v is not None and fsi_v >= 1.0) else "MODERATE STRESS")
+
+                liq_obj = getattr(m_data, "liquidity", None)
+                liq_card_html = ""
+                if liq_obj is not None:
+                    liq_badge_cls = "badge-green" if liq_obj.regime == "Expanding" else ("badge-red" if liq_obj.regime == "Draining" else "badge-primary")
+                    imp4_h = f"{liq_obj.impulse_4w_b:+,.1f}B" if liq_obj.impulse_4w_b is not None else "n/a"
+                    imp13_h = f"{liq_obj.impulse_13w_b:+,.1f}B" if liq_obj.impulse_13w_b is not None else "n/a"
+                    liq_card_html = f"""
+                    <div class="vix-metric">
+                        <div class="vix-header">
+                            <span class="vix-label">FED NET LIQUIDITY (H.4.1)</span>
+                            {_render_toggletip("tip-fc-liq", f"WALCL (${liq_obj.walcl_t:.3f}T) - TGA (${liq_obj.tga_b:,.1f}B) - ON RRP (${liq_obj.rrp_b:,.1f}B).", "Fed Net Liquidity details")}
+                        </div>
+                        <span class="vix-val font-mono">${liq_obj.net_liquidity_t:.3f}T</span>
+                        <span class="vix-sub">4W: {imp4_h} | 13W: {imp13_h}</span>
+                        <div style="margin-top: 6px;"><span class="badge {liq_badge_cls}">{liq_obj.regime.upper()}</span></div>
+                    </div>
+                    """
+
+                bbb_card_html = ""
+                if getattr(intel.credit, "bbb_spread_bps", None) is not None:
+                    hy_bbb_txt = f"HY–BBB Compression: {intel.credit.hy_bbb_compression_bps:.0f} bps" if intel.credit.hy_bbb_compression_bps is not None else "ICE BofA BBB OAS"
+                    bbb_card_html = f"""
+                    <div class="vix-metric">
+                        <div class="vix-header">
+                            <span class="vix-label">BBB CORPORATE OAS (IG FLOOR)</span>
+                            {_render_toggletip("tip-fc-bbb", "Lower-tier IG credit floor (BAMLC0A4CBBB) vs. High-Yield spread differential.", "BBB Corporate OAS details")}
+                        </div>
+                        <span class="vix-val font-mono">{intel.credit.bbb_spread_bps:.0f} bps</span>
+                        <span class="vix-sub">{f"Period &Delta;: {_fmt_delta(intel.credit.bbb_delta_bps)} bps" if intel.credit.bbb_delta_bps is not None else "FRED BAMLC0A4CBBB"}</span>
+                        <div style="margin-top: 6px;"><span class="badge badge-primary">{hy_bbb_txt.upper()}</span></div>
+                    </div>
+                    """
+
+                has_mkt_ind = bool(getattr(m_data, "market_indicators", None))
+                if has_mkt_ind:
+                    body_html.append(f"""
+                <h3 class="sub-title" style="margin-top: 24px;">Forward-Looking Financial Conditions &amp; Systemic Liquidity</h3>
                 <div class="vix-grid" style="margin-bottom: 20px;">
                     <div class="vix-metric">
-                        <span class="vix-label">HIGH-YIELD CREDIT OAS</span>
-                        <span class="vix-val font-mono">{intel.credit.spread_bps:.0f} <small style="font-size: 13px;">bps</small></span>
-                        <span class="vix-sub">Period &Delta;: {_fmt_delta(intel.credit.delta_bps)} bps ({intel.credit.spread_pct:.2f}%)</span>
-                        <div style="margin-top: 6px;"><span class="badge {credit_badge}">{intel.credit.regime.upper()}</span></div>
-                        <p class="vix-desc">{intel.credit.assessment}</p>
-                    </div>
-                    <div class="vix-metric">
-                        <span class="vix-label">REAL 10Y TIPS YIELD</span>
-                        <span class="vix-val font-mono">{intel.rates.real_yield_10y:.2f}%</span>
-                        <span class="vix-sub">Period &Delta;: {_fmt_delta(intel.rates.real_yield_delta_bps)} bps | 10Y BE: {intel.rates.breakeven_10y:.2f}%</span>
-                        <div style="margin-top: 6px;"><span class="badge badge-primary">{intel.rates.driver_attribution.upper()}</span></div>
-                        <p class="vix-desc">{intel.rates.assessment}</p>
-                    </div>
-                    <div class="vix-metric">
-                        <span class="vix-label">VIX TERM STRUCTURE (1M/3M)</span>
+                        <div class="vix-header">
+                            <span class="vix-label">VIX TERM STRUCTURE (1M/3M)</span>
+                            {_render_toggletip("tip-fc-vol", intel.vol_term.assessment, "VIX term structure details")}
+                        </div>
                         <span class="vix-val font-mono">{intel.vol_term.ratio:.3f}</span>
                         <span class="vix-sub">1M: {intel.vol_term.vix_1m:.2f} | 3M: {intel.vol_term.vix_3m:.2f} (&Delta; {intel.vol_term.ratio_delta:+.3f})</span>
                         <div style="margin-top: 6px;"><span class="badge {vol_badge}">{intel.vol_term.structure.upper()}</span></div>
-                        <p class="vix-desc">{intel.vol_term.assessment}</p>
                     </div>
                     <div class="vix-metric">
-                        <span class="vix-label">SECTOR ROTATION SPREAD</span>
+                        <div class="vix-header">
+                            <span class="vix-label">SECTOR ROTATION SPREAD</span>
+                            {_render_toggletip("tip-fc-rot", f"<strong>Lagging Sectors:</strong> {', '.join(intel.rotation.top_outflows[-2:]) if intel.rotation.top_outflows else 'Growth'}. {intel.rotation.assessment}", "Sector rotation details")}
+                        </div>
                         <span class="vix-val font-mono">{intel.rotation.spread:+.2f}%</span>
                         <span class="vix-sub">Leading: {", ".join(intel.rotation.top_inflows[:2]) if intel.rotation.top_inflows else "Defensives"}</span>
                         <div style="margin-top: 6px;"><span class="badge {rot_badge}">{intel.rotation.posture.upper()}</span></div>
-                        <p class="vix-desc"><strong>Lagging Sectors:</strong> {", ".join(intel.rotation.top_outflows[-2:]) if intel.rotation.top_outflows else "Growth"}. {intel.rotation.assessment}</p>
+                    </div>
+                    <div class="vix-metric">
+                        <div class="vix-header">
+                            <span class="vix-label">FINANCIAL STRESS INDEX</span>
+                            {_render_toggletip("tip-fc-fsi", "St. Louis Fed Financial Stress Index (STLFSI4; 0 = normal average stress).", "Financial Stress Index details")}
+                        </div>
+                        <span class="vix-val font-mono">{f"{intel.credit.financial_stress_index:.2f}" if intel.credit.financial_stress_index is not None else "—"}</span>
+                        <span class="vix-sub">{intel.credit.financial_stress_label if intel.credit.financial_stress_index is not None else "—"}</span>
+                        <div style="margin-top: 6px;"><span class="badge {fsi_badge_cls}">{fsi_badge_txt}</span></div>
+                    </div>
+                    {bbb_card_html}
+                    {liq_card_html}
+                </div>
+                """)
+                else:
+                    body_html.append(f"""
+                <h3 class="sub-title" style="margin-top: 24px;">Forward-Looking Financial Conditions &amp; Risk Premiums</h3>
+                <div class="vix-grid" style="margin-bottom: 20px;">
+                    <div class="vix-metric">
+                        <div class="vix-header">
+                            <span class="vix-label">HIGH-YIELD CREDIT OAS</span>
+                            {_render_toggletip("tip-fc-hy", intel.credit.assessment, "High-Yield Credit OAS details")}
+                        </div>
+                        <span class="vix-val font-mono">{intel.credit.spread_bps:.0f} <small style="font-size: 13px;">bps</small></span>
+                        <span class="vix-sub">Period &Delta;: {_fmt_delta(intel.credit.delta_bps)} bps ({intel.credit.spread_pct:.2f}%)</span>
+                        <div style="margin-top: 6px;"><span class="badge {credit_badge}">{intel.credit.regime.upper()}</span></div>
+                    </div>
+                    <div class="vix-metric">
+                        <div class="vix-header">
+                            <span class="vix-label">REAL 10Y TIPS YIELD</span>
+                            {_render_toggletip("tip-fc-tips", intel.rates.assessment, "Real 10Y TIPS Yield details")}
+                        </div>
+                        <span class="vix-val font-mono">{intel.rates.real_yield_10y:.2f}%</span>
+                        <span class="vix-sub">Period &Delta;: {_fmt_delta(intel.rates.real_yield_delta_bps)} bps | 10Y BE: {intel.rates.breakeven_10y:.2f}%</span>
+                        <div style="margin-top: 6px;"><span class="badge badge-primary">{intel.rates.driver_attribution.upper()}</span></div>
+                    </div>
+                    <div class="vix-metric">
+                        <div class="vix-header">
+                            <span class="vix-label">VIX TERM STRUCTURE (1M/3M)</span>
+                            {_render_toggletip("tip-fc-vol-alt", intel.vol_term.assessment, "VIX term structure details")}
+                        </div>
+                        <span class="vix-val font-mono">{intel.vol_term.ratio:.3f}</span>
+                        <span class="vix-sub">1M: {intel.vol_term.vix_1m:.2f} | 3M: {intel.vol_term.vix_3m:.2f} (&Delta; {intel.vol_term.ratio_delta:+.3f})</span>
+                        <div style="margin-top: 6px;"><span class="badge {vol_badge}">{intel.vol_term.structure.upper()}</span></div>
+                    </div>
+                    <div class="vix-metric">
+                        <div class="vix-header">
+                            <span class="vix-label">SECTOR ROTATION SPREAD</span>
+                            {_render_toggletip("tip-fc-rot-alt", f"<strong>Lagging Sectors:</strong> {', '.join(intel.rotation.top_outflows[-2:]) if intel.rotation.top_outflows else 'Growth'}. {intel.rotation.assessment}", "Sector rotation details")}
+                        </div>
+                        <span class="vix-val font-mono">{intel.rotation.spread:+.2f}%</span>
+                        <span class="vix-sub">Leading: {", ".join(intel.rotation.top_inflows[:2]) if intel.rotation.top_inflows else "Defensives"}</span>
+                        <div style="margin-top: 6px;"><span class="badge {rot_badge}">{intel.rotation.posture.upper()}</span></div>
                     </div>
                 </div>
 
@@ -1040,28 +1823,38 @@ def render_html(
                 <h3 class="sub-title" style="margin-top: 24px;">Credit &amp; Funding Conditions (Systemic Liquidity)</h3>
                 <div class="vix-grid" style="margin-bottom: 20px;">
                     <div class="vix-metric">
-                        <span class="vix-label">INVESTMENT-GRADE CREDIT OAS</span>
-                        <span class="vix-val font-mono">{f"{intel.credit.ig_spread_bps:.0f} bps" if intel.credit.ig_spread_bps is not None else "n/a (source unavailable)"}</span>
-                        <span class="vix-sub">{f"Period &Delta;: {_fmt_delta(intel.credit.ig_delta_bps)} bps" if intel.credit.ig_delta_bps is not None else "n/a"}</span>
+                        <div class="vix-header">
+                            <span class="vix-label">INVESTMENT-GRADE CREDIT OAS</span>
+                            {_render_toggletip("tip-fc-ig", "ICE BofA US Investment Grade Option-Adjusted Spread (FRED BAMLC0A0CM).", "Investment-Grade OAS details")}
+                        </div>
+                        <span class="vix-val font-mono">{f"{intel.credit.ig_spread_bps:.0f} bps" if intel.credit.ig_spread_bps is not None else "—"}</span>
+                        <span class="vix-sub">{f"Period &Delta;: {_fmt_delta(intel.credit.ig_delta_bps)} bps" if intel.credit.ig_delta_bps is not None else "—"}</span>
                         <div style="margin-top: 6px;"><span class="badge badge-green">TIGHT / LOW SPREAD</span></div>
-                        <p class="vix-desc">ICE BofA US Investment Grade Option-Adjusted Spread (FRED BAMLC0A0CM).</p>
                     </div>
+                    {bbb_card_html}
                     <div class="vix-metric">
-                        <span class="vix-label">3M / 10Y YIELD CURVE</span>
-                        <span class="vix-val font-mono">{f"{intel.credit.spread_3m10y_bps:+.0f} bps" if intel.credit.spread_3m10y_bps is not None else "n/a (source unavailable)"}</span>
+                        <div class="vix-header">
+                            <span class="vix-label">3M / 10Y YIELD CURVE</span>
+                            {_render_toggletip("tip-fc-curve", "Benchmark short-funding vs. long-duration curve spread.", "3M/10Y Yield Curve details")}
+                        </div>
+                        <span class="vix-val font-mono">{f"{intel.credit.spread_3m10y_bps:+.0f} bps" if intel.credit.spread_3m10y_bps is not None else "—"}</span>
                         <span class="vix-sub">10Y minus 3M T-Bill (FRED T10Y3M)</span>
                         <div style="margin-top: 6px;"><span class="badge badge-bullish">{"NORMAL / UN-INVERTED" if (intel.credit.spread_3m10y_bps is not None and intel.credit.spread_3m10y_bps > 0) else "INVERTED"}</span></div>
-                        <p class="vix-desc">Benchmark short-funding vs. long-duration curve spread.</p>
                     </div>
                     <div class="vix-metric">
-                        <span class="vix-label">FINANCIAL STRESS INDEX</span>
-                        <span class="vix-val font-mono">{f"{intel.credit.financial_stress_index:.2f}" if intel.credit.financial_stress_index is not None else "n/a (source unavailable)"}</span>
-                        <span class="vix-sub">{intel.credit.financial_stress_label if intel.credit.financial_stress_index is not None else "n/a"}</span>
-                        <div style="margin-top: 6px;"><span class="badge badge-primary">LOW STRESS</span></div>
-                        <p class="vix-desc">St. Louis Fed Financial Stress Index (STLFSI4; 0 = normal average stress).</p>
+                        <div class="vix-header">
+                            <span class="vix-label">FINANCIAL STRESS INDEX</span>
+                            {_render_toggletip("tip-fc-fsi-alt", "St. Louis Fed Financial Stress Index (STLFSI4; 0 = normal average stress).", "Financial Stress Index details")}
+                        </div>
+                        <span class="vix-val font-mono">{f"{intel.credit.financial_stress_index:.2f}" if intel.credit.financial_stress_index is not None else "—"}</span>
+                        <span class="vix-sub">{intel.credit.financial_stress_label if intel.credit.financial_stress_index is not None else "—"}</span>
+                        <div style="margin-top: 6px;"><span class="badge {fsi_badge_cls}">{fsi_badge_txt}</span></div>
                     </div>
+                    {liq_card_html}
                 </div>
+                """)
 
+                body_html.append(f"""
                 <div class="macro-regime-card" style="background: var(--bg-card-subtle); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; margin-bottom: 24px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 10px;">
                         <div>
@@ -1080,79 +1873,71 @@ def render_html(
                 """)
 
             # S&P 500 Valuation vs. Rates & ERP (Stage 3 Task 3.1 & Stage 4 Task 4.2)
-            if m_data.valuation:
+            if m_data.valuation and m_data.valuation.forward_pe is not None:
                 v = m_data.valuation
-                if v.forward_pe is None:
-                    body_html.append("""
-                    <h3 class="sub-title" style="margin-top: 24px;">S&amp;P 500 Valuation vs. Rates &amp; Equity Risk Premium</h3>
-                    <div style="padding: 12px 16px; background: var(--bg-card-subtle); border-radius: 8px; font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
-                        <span class="font-mono font-bold">n/a (source unavailable)</span> &mdash; Forward valuation multiples and consensus forward EPS estimates are currently unavailable from data provider. Equity Risk Premium metrics are omitted until verified forward earnings estimates are available.
-                    </div>
-                    """)
-                else:
-                    pe_str = f"{v.forward_pe:.2f}x"
-                    ey_str = f"{v.earnings_yield_pct:.2f}%" if v.earnings_yield_pct is not None else '<span class="text-muted">n/a (source unavailable)</span>'
-                    nom_hurdle = f"10Y Treasury ({v.nominal_10y_yield:.2f}%)" if v.nominal_10y_yield is not None else "10Y Treasury (DGS10)"
-                    nom_erp_str = f"{v.nominal_erp_bps:+.1f} bps" if v.nominal_erp_bps is not None else "n/a (source unavailable)"
-                    nom_class = "text-green font-bold" if (v.nominal_erp_bps and v.nominal_erp_bps >= 100.0) else ("text-yellow font-bold" if v.nominal_erp_bps else "text-muted")
-                    real_hurdle = f"10Y TIPS ({v.real_10y_yield:.2f}%)" if v.real_10y_yield is not None else "10Y TIPS Real Yield (DFII10)"
-                    real_erp_str = f"{v.real_erp_bps:+.1f} bps" if v.real_erp_bps is not None else "n/a (source unavailable)"
-                    real_class = "text-green font-bold" if (v.real_erp_bps and v.real_erp_bps >= 200.0) else ("text-yellow font-bold" if v.real_erp_bps else "text-muted")
+                pe_str = f"{v.forward_pe:.2f}x"
+                ey_str = f"{v.earnings_yield_pct:.2f}%" if v.earnings_yield_pct is not None else '<span class="text-muted">—</span>'
+                nom_hurdle = f"10Y Treasury ({v.nominal_10y_yield:.2f}%)" if v.nominal_10y_yield is not None else "10Y Treasury (DGS10)"
+                nom_erp_str = f"{v.nominal_erp_bps:+.1f} bps" if v.nominal_erp_bps is not None else "—"
+                nom_class = "text-green font-bold" if (v.nominal_erp_bps and v.nominal_erp_bps >= 100.0) else ("text-yellow font-bold" if v.nominal_erp_bps else "text-muted")
+                real_hurdle = f"10Y TIPS ({v.real_10y_yield:.2f}%)" if v.real_10y_yield is not None else "10Y TIPS Real Yield (DFII10)"
+                real_erp_str = f"{v.real_erp_bps:+.1f} bps" if v.real_erp_bps is not None else "—"
+                real_class = "text-green font-bold" if (v.real_erp_bps and v.real_erp_bps >= 200.0) else ("text-yellow font-bold" if v.real_erp_bps else "text-muted")
 
-                    body_html.append(f"""
-                    <h3 class="sub-title" style="margin-top: 24px;">S&amp;P 500 Valuation vs. Rates &amp; Equity Risk Premium</h3>
-                    <div class="note-box" style="margin-bottom: 16px;">
-                        <strong>Valuation &amp; ERP Context:</strong> {v.assessment}
-                    </div>
-                    <div class="table-container">
-                        <table class="report-table">
-                            <thead>
-                                <tr>
-                                    <th>Valuation Metric</th>
-                                    <th class="text-center">Current Level</th>
-                                    <th class="text-center">Benchmark / Hurdle</th>
-                                    <th class="text-center">Spread / Risk Premium</th>
-                                    <th>Sourcing &amp; Context</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr>
-                                    <td><strong>Forward P/E</strong></td>
-                                    <td class="text-center font-mono font-bold">{pe_str}</td>
-                                    <td class="text-center">&mdash;</td>
-                                    <td class="text-center">&mdash;</td>
-                                    <td>Forward multiple on consensus 12M EPS ({v.source})</td>
-                                </tr>
-                                <tr>
-                                    <td><strong>Earnings Yield (1/PE)</strong></td>
-                                    <td class="text-center font-mono font-bold">{ey_str}</td>
-                                    <td class="text-center">&mdash;</td>
-                                    <td class="text-center">&mdash;</td>
-                                    <td>Equity cash generation yield (1 / Forward P/E)</td>
-                                </tr>
-                                <tr>
-                                    <td><strong>Nominal Equity Risk Premium (ERP)</strong></td>
-                                    <td class="text-center font-mono">{ey_str}</td>
-                                    <td class="text-center font-mono">{nom_hurdle}</td>
-                                    <td class="text-center font-mono {nom_class}">{nom_erp_str}</td>
-                                    <td>Earnings Yield minus 10Y Benchmark Yield</td>
-                                </tr>
-                                <tr>
-                                    <td><strong>Real Equity Risk Premium (Real ERP)</strong></td>
-                                    <td class="text-center font-mono">{ey_str}</td>
-                                    <td class="text-center font-mono">{real_hurdle}</td>
-                                    <td class="text-center font-mono {real_class}">{real_erp_str}</td>
-                                    <td>Earnings Yield minus 10Y TIPS Real Yield</td>
-                                </tr>
-                                <tr>
-                                    <td><strong>Forward EPS Revision Trend</strong></td>
-                                    <td class="text-center font-mono font-bold" colspan="3">{v.eps_revision_trend}</td>
-                                    <td>Revision momentum across S&amp;P 500 constituents</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                    """)
+                body_html.append(f"""
+                <h3 class="sub-title" style="margin-top: 24px;">S&amp;P 500 Valuation vs. Rates &amp; Equity Risk Premium</h3>
+                <div class="note-box" style="margin-bottom: 16px;">
+                    <strong>Valuation &amp; ERP Context:</strong> {v.assessment}
+                </div>
+                <div class="table-container">
+                    <table class="report-table">
+                        <thead>
+                            <tr>
+                                <th>Valuation Metric</th>
+                                <th class="text-center">Current Level</th>
+                                <th class="text-center">Benchmark / Hurdle</th>
+                                <th class="text-center">Spread / Risk Premium</th>
+                                <th>Sourcing &amp; Context</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>Forward P/E</strong></td>
+                                <td class="text-center font-mono font-bold">{pe_str}</td>
+                                <td class="text-center">&mdash;</td>
+                                <td class="text-center">&mdash;</td>
+                                <td>Forward multiple on consensus 12M EPS ({v.source})</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Earnings Yield (1/PE)</strong></td>
+                                <td class="text-center font-mono font-bold">{ey_str}</td>
+                                <td class="text-center">&mdash;</td>
+                                <td class="text-center">&mdash;</td>
+                                <td>Equity cash generation yield (1 / Forward P/E)</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Nominal Equity Risk Premium (ERP)</strong></td>
+                                <td class="text-center font-mono">{ey_str}</td>
+                                <td class="text-center font-mono">{nom_hurdle}</td>
+                                <td class="text-center font-mono {nom_class}">{nom_erp_str}</td>
+                                <td>Earnings Yield minus 10Y Benchmark Yield</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Real Equity Risk Premium (Real ERP)</strong></td>
+                                <td class="text-center font-mono">{ey_str}</td>
+                                <td class="text-center font-mono">{real_hurdle}</td>
+                                <td class="text-center font-mono {real_class}">{real_erp_str}</td>
+                                <td>Earnings Yield minus 10Y TIPS Real Yield</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Forward EPS Revision Trend</strong></td>
+                                <td class="text-center font-mono font-bold" colspan="3">{v.eps_revision_trend}</td>
+                                <td>Revision momentum across S&amp;P 500 constituents</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                """)
 
             # 3. Cross-Asset Snapshot (Stage 3: 3.6 De-duplicate; link to Section 10 & 12)
             body_html.append("""
@@ -1320,7 +2105,7 @@ def render_html(
                     <td class="text-center font-mono {r_delta_class}"><strong>{r_delta_str}</strong></td>
                 </tr>
                 """)
-            w_tag = "[1-Month Strategic View]" if period.report_type == "monthly" else ("[1-Week Swing View]" if period.report_type == "weekly" else "[Daily Tactical View]")
+            w_tag = "[1-Month Strategic View]" if period.report_type == "monthly" else ("[1-Week View]" if period.report_type == "weekly" else "[Daily Tactical View]")
             
             # Sector Breadth Table (Stage 4: 4.2)
             b_rows = []
@@ -1386,6 +2171,7 @@ def render_html(
                     """
                 else:
                     leader_sections = []
+                    leader_ret_hdr = "1M Return" if period.report_type == "monthly" else "1W Return"
                     for sec_name, l_list in s_data.sector_leaders.items():
                         l_rows = []
                         for rank_idx, leader in enumerate(l_list, 1):
@@ -1394,7 +2180,8 @@ def render_html(
                             else:
                                 d_vol_str = f"${leader.avg_dollar_volume / 1e6:,.1f}M"
                             crs_val = leader.composite_rs if leader.composite_rs != 0.0 else leader.rs_vs_spy_pct
-                            exc_badge = ' <span class="badge badge-yellow" style="font-size: 11px; margin-left: 4px;">Exception candidate (gate Defensive)</span>' if getattr(leader, "is_exception_candidate", False) else ""
+                            leader_ret_val = leader.pct_change if period.report_type == "monthly" else leader.ret_1w
+                            exc_badge = '<span class="badge badge-yellow" style="display: flex; width: fit-content; margin-top: 4px;">Outlier Leader (Defensive Regime)</span>' if getattr(leader, "is_exception_candidate", False) else ""
                             l_rows.append(f"""
                             <tr>
                                 <td class="text-center font-bold">#{rank_idx}</td>
@@ -1402,7 +2189,7 @@ def render_html(
                                 <td>{leader.name}</td>
                                 <td class="text-right font-mono">${leader.close:,.2f}</td>
                                 <td class="text-right font-bold font-mono">{_fmt_pct(crs_val)}</td>
-                                <td class="text-right font-mono">{_fmt_pct(leader.ret_1w)}</td>
+                                <td class="text-right font-mono">{_fmt_pct(leader_ret_val)}</td>
                                 <td class="text-right font-mono">{_fmt_pct(leader.dist_52w_high_pct)}</td>
                                 <td class="text-right font-mono">{leader.volume_ratio:.2f}x</td>
                                 <td class="text-right font-mono text-muted">{d_vol_str}</td>
@@ -1420,7 +2207,7 @@ def render_html(
                                             <th>Company Name</th>
                                             <th class="text-right">Close</th>
                                             <th class="text-right">Composite RS</th>
-                                            <th class="text-right">1W Return</th>
+                                            <th class="text-right">{leader_ret_hdr}</th>
                                             <th class="text-right">Dist 52W High</th>
                                             <th class="text-right">20D Vol Ratio</th>
                                             <th class="text-right">Avg $ Volume</th>
@@ -1445,6 +2232,84 @@ def render_html(
                         <p class="table-caption">Screened for stocks above 50-DMA, within 15% of 52-week highs, and minimum $20M daily dollar volume (ranked by Composite RS vs SPY).</p>
                         {''.join(leader_sections)}
                         """
+                        if period.report_type == "weekly":
+                            leaders_html = f'<details style="margin-top: 24px;"><summary>Sector Leadership Constituents (Top 3 Leading Sectors)</summary>{leaders_html}</details>'
+
+            rotation_quadrants_html = ""
+            if getattr(s_data, "rotation_quadrants", None):
+                rq_rows = []
+                for rq in s_data.rotation_quadrants:
+                    q_badge = "badge-green" if rq.quadrant == "Leading" else ("badge-yellow" if rq.quadrant in ("Weakening", "Improving") else "badge-red")
+                    rs_c = "text-green font-bold" if rq.rs_10w_pct > 0 else ("text-red font-bold" if rq.rs_10w_pct < 0 else "text-muted")
+                    mom_c = "text-green font-bold" if rq.rs_momentum_pct > 0 else ("text-red font-bold" if rq.rs_momentum_pct < 0 else "text-muted")
+                    rq_rows.append(f"""
+                    <tr>
+                        <td><strong>{rq.name}</strong></td>
+                        <td class="font-mono text-center">{rq.symbol}</td>
+                        <td class="text-right font-mono {rs_c}">{_fmt_pct(rq.rs_10w_pct)}</td>
+                        <td class="text-right font-mono {mom_c}">{_fmt_pct(rq.rs_momentum_pct)}</td>
+                        <td class="text-center"><span class="badge {q_badge}">{rq.quadrant}</span></td>
+                        <td>{rq.candle_structure}</td>
+                    </tr>
+                    """)
+                rotation_quadrants_html = f"""
+                <h3 class="sub-title" style="margin-top: 24px;">Sector Rotation Quadrants &amp; Weekly Candle Structure</h3>
+                <p class="table-caption">10-Week Relative Strength vs SPY, RS Momentum, and Weekly Candlestick Price Action across all 11 SPDR Sectors.</p>
+                <div class="table-container">
+                    <table class="report-table compact-table">
+                        <thead>
+                            <tr>
+                                <th>Sector Name</th>
+                                <th class="text-center">Symbol</th>
+                                <th class="text-right">10W RS vs SPY</th>
+                                <th class="text-right">RS Momentum</th>
+                                <th class="text-center">Quadrant</th>
+                                <th>Weekly Candle Structure</th>
+                            </tr>
+                        </thead>
+                        <tbody>{''.join(rq_rows)}</tbody>
+                    </table>
+                </div>
+                """
+
+            style_html = ""
+            style_attr = getattr(s_data, "style_attribution", None)
+            if style_attr and getattr(style_attr, "items", None):
+                sf_rows = []
+                for sf in style_attr.items:
+                    sp_cls = "text-green font-bold" if sf.period_spread_pct >= 0.25 else ("text-red font-bold" if sf.period_spread_pct <= -0.25 else "text-muted font-bold")
+                    s1m_h = f"{sf.ret_1m_spread_pct:+.2f}%" if sf.ret_1m_spread_pct is not None else "—"
+                    s3m_h = f"{sf.ret_3m_spread_pct:+.2f}%" if sf.ret_3m_spread_pct is not None else "—"
+                    sf_badge = "badge-bullish" if sf.period_spread_pct >= 0.25 else ("badge-bearish" if sf.period_spread_pct <= -0.25 else "badge-neutral")
+                    sf_rows.append(f"""
+                    <tr>
+                        <td><strong>{sf.factor_pair}</strong></td>
+                        <td class="text-right font-mono {sp_cls}">{sf.period_spread_pct:+.2f}%</td>
+                        <td class="text-right font-mono">{s1m_h}</td>
+                        <td class="text-right font-mono">{s3m_h}</td>
+                        <td class="text-center"><span class="badge {sf_badge}">{sf.regime_label}</span></td>
+                    </tr>
+                    """)
+                synth_note = f'<p style="font-size: 13px; color: var(--text-muted); margin-top: 8px;">🧭 <strong>{style_attr.dominant_style}:</strong> {style_attr.synthesis}</p>' if style_attr.synthesis else ""
+                style_html = f"""
+                <h3 class="sub-title" style="margin-top: 24px;">Equity Style, Size &amp; Factor Attribution</h3>
+                <p class="table-caption">Relative return spreads comparing Growth vs. Value (IWF/IWD), Small vs. Large (IWM/SPY), Equal vs. Cap-Weight (RSP/SPY), Momentum (MTUM/SPY), and Quality (QUAL/SPY).</p>
+                <div class="table-container">
+                    <table class="report-table compact-table">
+                        <thead>
+                            <tr>
+                                <th>Factor Pair</th>
+                                <th class="text-right">Period Spread</th>
+                                <th class="text-right">1M Spread</th>
+                                <th class="text-right">3M Spread</th>
+                                <th class="text-center">Style Regime</th>
+                            </tr>
+                        </thead>
+                        <tbody>{''.join(sf_rows)}</tbody>
+                    </table>
+                </div>
+                {synth_note}
+                """
 
             body_html.append(f"""
             <h3 class="sub-title">11 SPDR Sector Relative Strength Matrix {w_tag}</h3>
@@ -1468,6 +2333,8 @@ def render_html(
                     </tbody>
                 </table>
             </div>
+            {style_html}
+            {rotation_quadrants_html}
             {breadth_table_html}
             {leaders_html}
             """)
@@ -1485,15 +2352,6 @@ def render_html(
             t_rows = []
             for item in tr.items:
                 if not item.is_available:
-                    t_rows.append(f"""
-                    <tr>
-                        <td class="text-center text-muted">&mdash;</td>
-                        <td><strong>{item.name}</strong></td>
-                        <td class="font-mono text-center">{item.symbol}</td>
-                        <td>{item.category}</td>
-                        <td colspan="7" class="text-center text-muted">n/a (source unavailable)</td>
-                    </tr>
-                    """)
                     continue
                 r_delta_class = "text-green font-bold" if item.rank_change > 0 else ("text-red font-bold" if item.rank_change < 0 else "text-muted")
                 r_delta_str = f"+{item.rank_change}" if item.rank_change > 0 else str(item.rank_change)
@@ -1593,13 +2451,6 @@ def render_html(
             ca_rows = []
             for it in ca_data.items:
                 if not it.is_available:
-                    ca_rows.append(f"""
-                    <tr>
-                        <td><strong>{it.name}</strong></td>
-                        <td class="font-mono text-center">{it.symbol}</td>
-                        <td colspan="4" class="text-center text-muted">n/a (source unavailable)</td>
-                    </tr>
-                    """)
                     continue
                 is_fx = "=X" in it.symbol or "/" in it.name or "DXY" in it.name or "DX-Y" in it.symbol
                 if is_fx:
@@ -1642,6 +2493,48 @@ def render_html(
                 </div>
                 """
 
+            plumbing_box = ""
+            pl = getattr(ca_data, "plumbing", None)
+            if pl is not None:
+                cg_val_html = f"{pl.copper_gold_ratio:.3f}" if pl.copper_gold_ratio is not None else "—"
+                cg_sub_parts = []
+                if pl.copper_gold_3m_chg_pct is not None:
+                    cg_sub_parts.append(f"3M: {pl.copper_gold_3m_chg_pct:+.2f}%")
+                if pl.nominal_10y_yield is not None:
+                    y10_p = f"10Y: {pl.nominal_10y_yield:.2f}%"
+                    if pl.yield_10y_13w_bps is not None:
+                        y10_p += f" ({pl.yield_10y_13w_bps:+.0f} bps 13W)"
+                    cg_sub_parts.append(y10_p)
+                cg_sub_html = " | ".join(cg_sub_parts) if cg_sub_parts else "Copper/Gold (x1000) vs 10Y"
+
+                sb_val_html = f"{pl.stock_bond_corr_60d:+.2f}" if pl.stock_bond_corr_60d is not None else "—"
+                sb_sub_parts = []
+                if pl.stock_bond_corr_prev_60d is not None:
+                    sb_sub_parts.append(f"Prior 60D: {pl.stock_bond_corr_prev_60d:+.2f}")
+                if pl.tlt_3m_ret is not None:
+                    sb_sub_parts.append(f"TLT 3M: {pl.tlt_3m_ret:+.2f}%")
+                sb_sub_html = " | ".join(sb_sub_parts) if sb_sub_parts else "SPY vs TLT Rolling 60D"
+                sb_badge_cls = "badge-green" if (pl.stock_bond_corr_60d is not None and pl.stock_bond_corr_60d <= -0.25) else ("badge-red" if (pl.stock_bond_corr_60d is not None and pl.stock_bond_corr_60d >= 0.25) else "badge-neutral")
+
+                plumbing_box = f"""
+                <h3 class="sub-title" style="margin-top: 20px;">Cross-Asset Macro Plumbing (Growth Metals vs. Rates &amp; Stock-Bond Correlation)</h3>
+                <div class="vix-grid" style="margin-bottom: 12px;">
+                    <div class="vix-metric">
+                        <span class="vix-label">COPPER / GOLD RATIO (x1000)</span>
+                        <span class="vix-val font-mono">{cg_val_html}</span>
+                        <span class="vix-sub">{cg_sub_html}</span>
+                        <div style="margin-top: 6px;"><span class="badge badge-primary">{pl.copper_gold_regime.upper()}</span></div>
+                    </div>
+                    <div class="vix-metric">
+                        <span class="vix-label">60D STOCK-BOND CORRELATION (SPY / TLT)</span>
+                        <span class="vix-val font-mono">{sb_val_html}</span>
+                        <span class="vix-sub">{sb_sub_html}</span>
+                        <div style="margin-top: 6px;"><span class="badge {sb_badge_cls}">{pl.stock_bond_regime.upper()}</span></div>
+                    </div>
+                </div>
+                <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 8px;">🧭 {pl.assessment}</p>
+                """
+
             body_html.append(f"""
             <div class="table-container">
                 <table class="report-table">
@@ -1661,6 +2554,7 @@ def render_html(
                 </table>
             </div>
             {shock_box}
+            {plumbing_box}
             """)
 
         # Section: Market Breadth (Stage 3)
@@ -1686,6 +2580,11 @@ def render_html(
             mcclellan_html = ""
             if r.mcclellan_oscillator is not None:
                 m_class = "badge-bullish" if "Bullish" in (r.mcclellan_status or "") or "Overbought" in (r.mcclellan_status or "") else "badge-bearish"
+                mc_pct_row = (
+                    f'<div class="metric-row"><span class="text-muted">1Y Percentile Rank:</span> '
+                    f'<span class="font-mono font-bold">{format_percentile_ordinal(getattr(r, "mcclellan_pctile_1y", None))}</span></div>'
+                    if getattr(r, "mcclellan_pctile_1y", None) is not None else ""
+                )
                 mcclellan_html = f"""
                 <div class="tech-card">
                     <div class="tech-header">
@@ -1697,8 +2596,83 @@ def render_html(
                     </div>
                     <div class="metric-row"><span class="text-muted">Previous Period:</span> <span class="font-mono">{r.prev_mcclellan_oscillator:+.2f}</span></div>
                     <div class="metric-row"><span class="text-muted">Period Change:</span> <span>{_fmt_delta(r.delta_mcclellan_oscillator or 0.0)}</span></div>
+                    {mc_pct_row}
                     <div class="metric-row" style="margin-top: 6px;"><span class="text-muted" style="font-size: 11px;">19-EMA minus 39-EMA of daily net advances</span></div>
                 </div>
+                """
+
+            p50_pctile_str = format_percentile_ordinal(getattr(r, "pct_above_50_dma_pctile_1y", None))
+            p200_pctile_str = format_percentile_ordinal(getattr(r, "pct_above_200_dma_pctile_1y", None))
+            nh_pctile_str = format_percentile_ordinal(getattr(r, "net_new_highs_pctile_1y", None))
+            p50_pctile_badge = f' &bull; 1Y: <strong>{p50_pctile_str}</strong>' if getattr(r, "pct_above_50_dma_pctile_1y", None) is not None else ""
+            p200_pctile_badge = f' &bull; 1Y: <strong>{p200_pctile_str}</strong>' if getattr(r, "pct_above_200_dma_pctile_1y", None) is not None else ""
+            nh_pctile_badge = f' &bull; 1Y: <strong>{nh_pctile_str}</strong>' if getattr(r, "net_new_highs_pctile_1y", None) is not None else ""
+
+            analog_html = ""
+            analog = getattr(r, "analog_study", None)
+            if analog is not None and getattr(analog, "horizons", None):
+                analog_rows = []
+                for hz in analog.horizons:
+                    win_cls = "badge-bullish" if hz.win_rate_pct >= hz.baseline_win_rate_pct + 3.0 else ("badge-bearish" if hz.win_rate_pct <= hz.baseline_win_rate_pct - 3.0 else "badge-neutral")
+                    if getattr(analog, "is_small_sample", False):
+                        win_cell = f'<span class="badge {win_cls}" style="font-weight: normal;">{hz.win_rate_pct:.1f}%</span>'
+                    else:
+                        win_cell = f'<span class="badge {win_cls}"><strong>{hz.win_rate_pct:.1f}%</strong></span>'
+                    ci_str = f"[{hz.win_rate_ci_low:.1f}%, {hz.win_rate_ci_high:.1f}%]" if getattr(hz, "win_rate_ci_high", 0.0) > 0 else "—"
+                    iqr_cell = f'{hz.iqr_return:.2f}% <span class="text-muted">[{_fmt_pct(hz.p25_return)}, {_fmt_pct(hz.p75_return)}]</span>' if hasattr(hz, "iqr_return") else "—"
+                    analog_rows.append(f"""
+                        <tr>
+                            <td><strong>+{hz.horizon_days} Trading Days ({analog.benchmark_symbol})</strong></td>
+                            <td class="text-center">{win_cell}</td>
+                            <td class="text-center font-mono text-muted">{ci_str}</td>
+                            <td class="text-center font-mono text-muted">{hz.baseline_win_rate_pct:.1f}%</td>
+                            <td class="text-right">{_fmt_pct(hz.median_return_pct)}</td>
+                            <td class="text-right font-mono">{iqr_cell}</td>
+                            <td class="text-right">{_fmt_pct(hz.baseline_median_pct)}</td>
+                            <td class="text-right">{_fmt_pct(hz.mean_return_pct)}</td>
+                            <td class="text-right">{_fmt_pct(hz.worst_return_pct)}</td>
+                        </tr>
+                    """)
+                recent_dates = ", ".join(analog.analog_dates[-6:]) if analog.analog_dates else ""
+                dates_caption = (
+                    f'<p class="table-caption" style="margin-top: 8px;"><em>Recent non-overlapping analog dates (up to 6 most recent of {analog.sample_count}): {recent_dates}</em></p>'
+                    if recent_dates else ""
+                )
+                if getattr(analog, "breadth_cohort_note", ""):
+                    dates_caption += f'<p class="table-caption" style="margin-top: 6px;"><em>{analog.breadth_cohort_note}</em></p>'
+                if getattr(analog, "history_years", 0) >= 25:
+                    dates_caption += f'<p class="table-caption" style="margin-top: 4px;"><em>Historical lookback: {analog.history_years} years ({analog.history_start_year}–present), {analog.lookback_days} evaluated sessions across long-history index regime.</em></p>'
+
+                badge_badge = f' <span class="badge badge-warning" style="margin-left: 8px;">{analog.small_sample_badge}</span>' if getattr(analog, "small_sample_badge", "") else ""
+                hist_span_str = f" / {analog.history_years}Y History" if getattr(analog, "history_years", 0) > 0 else ""
+                analog_html = f"""
+                <h3 class="sub-title" style="margin-top: 22px;">Historical Analog Base-Rate Study</h3>
+                <div class="alert alert-info" style="margin-bottom: 12px;">
+                    <strong>Regime Match (N={analog.sample_count} Independent Setups{hist_span_str} / {analog.lookback_days} Sessions):</strong>{badge_badge}<br>
+                    {analog.condition_summary}<br>
+                    <span>{analog.summary_text}</span>
+                </div>
+                <div class="table-container">
+                    <table class="report-table">
+                        <thead>
+                            <tr>
+                                <th>Forward Horizon</th>
+                                <th class="text-center">Analog Win %</th>
+                                <th class="text-center">95% Wilson CI</th>
+                                <th class="text-center">Baseline Win %</th>
+                                <th class="text-right">Analog Median</th>
+                                <th class="text-right">IQR [P25, P75]</th>
+                                <th class="text-right">Baseline Median</th>
+                                <th class="text-right">Analog Mean</th>
+                                <th class="text-right">Worst Case</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {''.join(analog_rows)}
+                        </tbody>
+                    </table>
+                </div>
+                {dates_caption}
                 """
 
             body_html.append(f"""
@@ -1712,13 +2686,13 @@ def render_html(
                     <span class="vix-label">STOCKS > 50 DMA</span>
                     <span class="vix-val">{r.pct_above_50_dma.current:.1f}%</span>
                     <span class="vix-sub">Period Δ: {_fmt_pct(r.pct_above_50_dma.change)}</span>
-                    <span class="vix-desc">Prev Period: {r.pct_above_50_dma.previous:.1f}%</span>
+                    <span class="vix-desc">Prev Period: {r.pct_above_50_dma.previous:.1f}%{p50_pctile_badge}</span>
                 </div>
                 <div class="vix-metric">
                     <span class="vix-label">STOCKS > 200 DMA</span>
                     <span class="vix-val">{r.pct_above_200_dma.current:.1f}%</span>
                     <span class="vix-sub">Period Δ: {_fmt_pct(r.pct_above_200_dma.change)}</span>
-                    <span class="vix-desc">Prev Period: {r.pct_above_200_dma.previous:.1f}%</span>
+                    <span class="vix-desc">Prev Period: {r.pct_above_200_dma.previous:.1f}%{p200_pctile_badge}</span>
                 </div>
                 <div class="vix-metric">
                     <span class="vix-label">A/D RATIO (ADV / DEC)</span>
@@ -1730,7 +2704,7 @@ def render_html(
                     <span class="vix-label">NET NEW 52-WEEK HIGHS</span>
                     <span class="vix-val">{r.net_new_highs:+d}</span>
                     <span class="vix-sub">Highs: {r.new_52w_highs} &bull; Lows: {r.new_52w_lows}</span>
-                    <span class="vix-desc">Period Δ: {r.delta_net_new_highs:+d}</span>
+                    <span class="vix-desc">Period Δ: {r.delta_net_new_highs:+d}{nh_pctile_badge}</span>
                 </div>
             </div>
 
@@ -1741,6 +2715,7 @@ def render_html(
                         <tr>
                             <th>Breadth Metric</th>
                             <th class="text-right">Current %</th>
+                            <th class="text-center">1Y %ile</th>
                             <th class="text-right">Prior Period %</th>
                             <th class="text-right">Period &Delta;</th>
                             <th class="text-center">Trend Regime</th>
@@ -1750,6 +2725,7 @@ def render_html(
                         <tr>
                             <td><strong>% of Stocks Above 20 DMA</strong></td>
                             <td class="text-right font-mono font-bold">{r.pct_above_20_dma.current:.1f}%</td>
+                            <td class="text-center font-mono text-muted">&mdash;</td>
                             <td class="text-right font-mono">{r.pct_above_20_dma.previous:.1f}%</td>
                             <td class="text-right">{_fmt_pct(r.pct_above_20_dma.change)}</td>
                             <td class="text-center"><span class="badge {r20_class}">{r20_text}</span></td>
@@ -1757,6 +2733,7 @@ def render_html(
                         <tr>
                             <td><strong>% of Stocks Above 50 DMA</strong></td>
                             <td class="text-right font-mono font-bold">{r.pct_above_50_dma.current:.1f}%</td>
+                            <td class="text-center font-mono">{p50_pctile_str}</td>
                             <td class="text-right font-mono">{r.pct_above_50_dma.previous:.1f}%</td>
                             <td class="text-right">{_fmt_pct(r.pct_above_50_dma.change)}</td>
                             <td class="text-center"><span class="badge {r50_class}">{r50_text}</span></td>
@@ -1764,6 +2741,7 @@ def render_html(
                         <tr>
                             <td><strong>% of Stocks Above 200 DMA</strong></td>
                             <td class="text-right font-mono font-bold">{r.pct_above_200_dma.current:.1f}%</td>
+                            <td class="text-center font-mono">{p200_pctile_str}</td>
                             <td class="text-right font-mono">{r.pct_above_200_dma.previous:.1f}%</td>
                             <td class="text-right">{_fmt_pct(r.pct_above_200_dma.change)}</td>
                             <td class="text-center"><span class="badge {r200_class}">{r200_text}</span></td>
@@ -1788,6 +2766,8 @@ def render_html(
                 </div>
                 {mcclellan_html}
             </div>
+
+            {analog_html}
 
             <p class="table-caption" style="margin-top: 14px;"><em>*Note: Market breadth calculations use the current S&P 500 constituent roster (subject to survivorship bias for historical comparisons).</em></p>
             """)
@@ -1823,15 +2803,32 @@ def render_html(
             else:
                 prob_line = '<strong>Market-Implied Probabilities:</strong> <span class="text-muted font-mono">n/a (source unavailable)</span>'
 
+            fp_liq = getattr(fp, "liquidity", None)
+            liq_strip = ""
+            if fp_liq is not None:
+                imp4_fph = f"{fp_liq.impulse_4w_b:+,.1f}B" if fp_liq.impulse_4w_b is not None else "n/a"
+                imp13_fph = f"{fp_liq.impulse_13w_b:+,.1f}B" if fp_liq.impulse_13w_b is not None else "n/a"
+                liq_fph_cls = "badge-green" if fp_liq.regime == "Expanding" else ("badge-red" if fp_liq.regime == "Draining" else "badge-primary")
+                liq_strip = (
+                    f'<div style="font-size: 13px; margin-bottom: 4px;">'
+                    f'<strong>Fed Net Liquidity (WALCL - TGA - RRP):</strong> '
+                    f'<span class="font-mono font-bold">${fp_liq.net_liquidity_t:.3f}T</span> '
+                    f'(Assets ${fp_liq.walcl_t:.3f}T &bull; TGA ${fp_liq.tga_b:,.1f}B &bull; ON RRP ${fp_liq.rrp_b:,.1f}B &bull; '
+                    f'4W: <span class="font-mono">{imp4_fph}</span> &bull; 13W: <span class="font-mono">{imp13_fph}</span>) '
+                    f'<span class="badge {liq_fph_cls}" style="margin-left: 6px;">{fp_liq.regime.upper()}</span></div>'
+                )
+
             fed_details_box = f"""
             <div style="margin-top: 14px; padding: 12px 16px; background: var(--bg-card-subtle); border-radius: 8px;">
                 <div style="font-size: 13px; margin-bottom: 4px;">{prob_line}</div>
+                {liq_strip}
                 <div style="font-size: 13px; color: var(--text-muted); margin-top: 6px;">🧭 <em>{fp.assessment}</em></div>
             </div>
             """ if (period.report_type == "daily" and fp.days_to_next_meeting > 1) else f"""
             <div style="margin-top: 14px; padding: 12px 16px; background: var(--bg-card-subtle); border-radius: 8px;">
                 <div style="font-size: 13px; margin-bottom: 4px;"><strong>Most Recent Decision:</strong> <span class="font-mono">{fp.last_action_date}</span> &mdash; {fp.last_action_description}</div>
                 <div style="font-size: 13px; margin-bottom: 4px;">{prob_line}</div>
+                {liq_strip}
                 <div style="font-size: 13px; color: var(--text-muted); margin-top: 6px;">🧭 <em>{fp.assessment}</em></div>
             </div>
             """
@@ -1896,9 +2893,13 @@ def render_html(
                         else:
                             return f"{val:.2f} {unit}"
 
-                    fc_val = f'<span class="font-mono font-bold">{_fmt_h_val(ev.forecast, ev.unit)}</span>' if ev.forecast is not None else '<span class="text-muted font-mono">n/a (no consensus)</span>'
-                    pr_val = f'<span class="font-mono">{_fmt_h_val(ev.previous, ev.unit)}</span>' if ev.previous is not None else '<span class="text-muted font-mono">n/a</span>'
-                    cons_src = 'Finnhub Economic API' if ev.forecast is not None else '<span class="text-muted">n/a (unpolled)</span>'
+                    fc_val = f'<span class="font-mono font-bold">{_fmt_h_val(ev.forecast, ev.unit)}</span>' if ev.forecast is not None else '<span class="text-muted font-mono">—</span>'
+                    pr_val = f'<span class="font-mono">{_fmt_h_val(ev.previous, ev.unit)}</span>' if ev.previous is not None else '<span class="text-muted font-mono">—</span>'
+                    raw_cons_src = getattr(ev, "consensus_source", "") or ""
+                    cons_src = (
+                        raw_cons_src if (ev.forecast is not None and raw_cons_src and raw_cons_src != "—")
+                        else ('Official Survey' if ev.forecast is not None else '<span class="text-muted">—</span>')
+                    )
                 sched_src = f'<a href="{ev.source_url}" target="_blank" style="color: var(--primary); text-decoration: none;">{ev.source_name or ev.source}</a>' if getattr(ev, "source_url", None) else (ev.source or "Official U.S. Schedule")
 
                 cal_rows.append(f"""
@@ -1914,29 +2915,139 @@ def render_html(
                 </tr>
                 """)
 
-            cal_caption = f"Tracking imminent catalysts (next 24h-48h) through <strong>{fc.lookahead_date}</strong> &bull; Schedule Source: Official Federal Schedules | Consensus Source: Finnhub Economic API" if period.report_type == "daily" else f"Tracking catalyst releases through <strong>{fc.lookahead_date}</strong> &bull; Schedule Source: Official Federal Schedules | Consensus Source: Finnhub Economic API"
-            body_html.append(f"""
-            <p class="table-caption">{cal_caption}</p>
-            <div class="table-container">
-                <table class="report-table">
-                    <thead>
-                        <tr>
-                            <th class="text-center">Date</th>
-                            <th class="text-center">Time (ET)</th>
-                            <th>Catalyst Event</th>
-                            <th class="text-center">Impact</th>
-                            <th class="text-right">Prior</th>
-                            <th class="text-right">Consensus</th>
-                            <th>Schedule Source</th>
-                            <th>Consensus Source</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {''.join(cal_rows)}
-                    </tbody>
-                </table>
-            </div>
-            """)
+            cal_src_lbl = getattr(fc, "data_source", "Official Federal Schedules")
+            cons_hdr_lbl = "Finnhub Economic API" if "Finnhub" in cal_src_lbl else "Prior Only (Unpolled)"
+            cal_caption = f"Tracking imminent catalysts through <strong>{fc.lookahead_date}</strong> &bull; Schedule Source: {cal_src_lbl} | Consensus: {cons_hdr_lbl}" if period.report_type == "daily" else f"Tracking catalyst releases through <strong>{fc.lookahead_date}</strong> &bull; Schedule Source: {cal_src_lbl} | Consensus: {cons_hdr_lbl}"
+
+            week_ahead_html = ""
+            if getattr(fc, "weekly_ahead_events", None):
+                wa_rows = []
+                for we in fc.weekly_ahead_events:
+                    wa_rows.append(f"""
+                    <tr>
+                        <td class="font-mono text-center"><strong>{we.day_date}</strong></td>
+                        <td class="font-mono text-center">{we.time_et}</td>
+                        <td><strong>{we.release}</strong></td>
+                        <td class="text-center font-bold">{we.impact}</td>
+                        <td class="text-right font-mono">{we.prior}</td>
+                        <td style="font-size: 13px;">{we.market_sensitive}</td>
+                    </tr>
+                    """)
+                week_ahead_html = f"""
+                <h3 class="sub-title">The Week Ahead (Monday&ndash;Friday Catalyst Grid)</h3>
+                <p class="table-caption">Scheduled macroeconomic events with cross-asset market sensitivity mapping through {fc.lookahead_date}.</p>
+                <div class="table-container">
+                    <table class="report-table compact-table">
+                        <thead>
+                            <tr>
+                                <th class="text-center">Day / Date</th>
+                                <th class="text-center">Time (ET)</th>
+                                <th>Release</th>
+                                <th class="text-center">Impact</th>
+                                <th class="text-right">Prior</th>
+                                <th>Market Most Sensitive</th>
+                            </tr>
+                        </thead>
+                        <tbody>{''.join(wa_rows)}</tbody>
+                    </table>
+                </div>
+                """
+
+            earnings_deck_html = ""
+            if getattr(fc, "weekly_ahead_earnings", None):
+                ed_rows = []
+                for ee in fc.weekly_ahead_earnings:
+                    ed_rows.append(f"""
+                    <tr>
+                        <td class="font-mono text-center"><strong>{ee.day_date}</strong></td>
+                        <td class="text-center"><span class="badge badge-neutral">{ee.timing}</span></td>
+                        <td class="font-mono font-bold">{ee.symbol}</td>
+                        <td>{ee.name}</td>
+                        <td class="text-center font-mono">{ee.market_cap}</td>
+                    </tr>
+                    """)
+                earnings_deck_html = f"""
+                <h3 class="sub-title" style="margin-top: 24px;">Earnings on Deck (Notable Large-Cap Reports)</h3>
+                <p class="table-caption">Notable scheduled corporate earnings releases for the coming trading week.</p>
+                <div class="table-container">
+                    <table class="report-table compact-table">
+                        <thead>
+                            <tr>
+                                <th class="text-center">Day / Date</th>
+                                <th class="text-center">Session Timing</th>
+                                <th>Symbol</th>
+                                <th>Company Name</th>
+                                <th class="text-center">Market Cap</th>
+                            </tr>
+                        </thead>
+                        <tbody>{''.join(ed_rows)}</tbody>
+                    </table>
+                </div>
+                """
+
+            if period.report_type == "weekly":
+                mats_html = "".join(_render_scenario_matrix_html(m) for m in fc.scenario_matrices) if getattr(fc, "scenario_matrices", None) else ""
+                scenario_block = f"""
+                <h3 class="sub-title" style="margin-top: 22px;">Event Scenario Matrix (&ldquo;If-Then&rdquo; Reaction Playbook)</h3>
+                {mats_html}
+                """ if mats_html else ""
+                body_html.append(f"""
+                {week_ahead_html}
+                {earnings_deck_html}
+                <details style="margin-top: 20px;">
+                    <summary>Comprehensive Calendar &amp; Scenario Playbook</summary>
+                    <p class="table-caption" style="margin-top: 12px;">{cal_caption}</p>
+                    <div class="table-container">
+                        <table class="report-table">
+                            <thead>
+                                <tr>
+                                    <th class="text-center">Date</th>
+                                    <th class="text-center">Time (ET)</th>
+                                    <th>Catalyst Event</th>
+                                    <th class="text-center">Impact</th>
+                                    <th class="text-right">Prior</th>
+                                    <th class="text-right">Consensus</th>
+                                    <th>Schedule Source</th>
+                                    <th>Consensus Source</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {''.join(cal_rows)}
+                            </tbody>
+                        </table>
+                    </div>
+                    {scenario_block}
+                </details>
+                """)
+            else:
+                body_html.append(f"""
+                <p class="table-caption">{cal_caption}</p>
+                <div class="table-container">
+                    <table class="report-table">
+                        <thead>
+                            <tr>
+                                <th class="text-center">Date</th>
+                                <th class="text-center">Time (ET)</th>
+                                <th>Catalyst Event</th>
+                                <th class="text-center">Impact</th>
+                                <th class="text-right">Prior</th>
+                                <th class="text-right">Consensus</th>
+                                <th>Schedule Source</th>
+                                <th>Consensus Source</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {''.join(cal_rows)}
+                        </tbody>
+                    </table>
+                </div>
+                """)
+                if getattr(fc, "scenario_matrices", None):
+                    mats_html = "".join(_render_scenario_matrix_html(m) for m in fc.scenario_matrices)
+                    body_html.append(f"""
+                    <h3 class="sub-title" style="margin-top: 22px;">Event Scenario Matrix (&ldquo;If-Then&rdquo; Reaction Playbook)</h3>
+                    {mats_html}
+                    """)
 
         # Section: Corporate Earnings Layer
         elif isinstance(sec.data, EarningsLayerData):
@@ -1987,8 +3098,16 @@ def render_html(
                 </tr>
                 """)
 
-            recent_title = "Recent Large-Cap Reports (Last 24h–48h)" if period.report_type == "daily" else "Recent Large-Cap Earnings Results (Trailing 7 Days)"
-            upcoming_title = "Imminent Earnings: Tonight AMC &amp; Tomorrow BMO" if period.report_type == "daily" else "Next-Week Earnings: Top S&amp;P 500 Large-Cap Catalysts"
+            recent_title = (
+                "Recent Large-Cap Reports (Last 24h–48h)"
+                if period.report_type == "daily"
+                else ("Recent Large-Cap Earnings Results (Trailing 30 Days)" if period.report_type == "monthly" else "Recent Large-Cap Earnings Results (Trailing 7 Days)")
+            )
+            upcoming_title = (
+                "Imminent Earnings: Tonight AMC &amp; Tomorrow BMO"
+                if period.report_type == "daily"
+                else ("Next 30 Days Earnings: Top S&amp;P 500 Large-Cap Catalysts" if period.report_type == "monthly" else "Next-Week Earnings: Top S&amp;P 500 Large-Cap Catalysts")
+            )
 
             body_html.append(f"""
             <div class="vix-grid">
@@ -2073,13 +3192,22 @@ def render_html(
                 body_html.append(f'<h3 class="mover-period-title">{title_label}</h3>')
                 if pm.theme_summary:
                     body_html.append(f'<div class="alert alert-info" style="margin-bottom: 12px;">🏷️ <strong>Movers by Theme:</strong> {pm.theme_summary}</div>')
+                all_movers_pm = list(pm.gainers or []) + list(pm.losers or [])
+                has_move_causes = any(
+                    bool(getattr(m, "catalyst_driver", ""))
+                    or getattr(m, "move_cause_tag", None) not in (None, "", "Unknown", "—")
+                    for m in all_movers_pm
+                )
+                cause_th = "<th>Technical Context</th>" if has_move_causes else ""
                 body_html.append('<div class="movers-split">')
 
                 # Gainers
                 g_rows = []
                 for g in pm.gainers:
                     earn_pill = '<span class="badge badge-primary">YES</span>' if g.has_earnings_in_window else '<span class="badge badge-muted">NO</span>'
-                    g_mcap = (g.market_cap_str or 'n/a').replace('\\$', '$')
+                    g_mcap = (g.market_cap_str or '—').replace('\\$', '$')
+                    g_cause = getattr(g, "catalyst_driver", "") or (g.move_cause_tag if g.move_cause_tag not in (None, "", "Unknown") else "—")
+                    g_cause_td = f'<td style="font-size: 11px; color: var(--text-muted); max-width: 170px; line-height: 1.25;">{g_cause}</td>' if has_move_causes else ""
                     g_rows.append(f"""
                     <tr>
                         <td><strong>{g.symbol}</strong><br><span class="ticker-sub">{g.name[:18]}</span></td>
@@ -2089,7 +3217,7 @@ def render_html(
                         <td class="text-right">{_fmt_pct(g.pct_change)}</td>
                         <td class="text-right font-mono">{g.volume_ratio:.2f}x</td>
                         <td class="text-center">{earn_pill}</td>
-                        <td style="font-size: 11px; color: var(--text-muted); max-width: 140px; line-height: 1.25;">{g.move_cause_tag}</td>
+                        {g_cause_td}
                     </tr>
                     """)
                 body_html.append(f"""
@@ -2106,7 +3234,7 @@ def render_html(
                                     <th class="text-right">Change</th>
                                     <th class="text-right">20d Vol</th>
                                     <th class="text-center">Earnings?</th>
-                                    <th>Cause</th>
+                                    {cause_th}
                                 </tr>
                             </thead>
                             <tbody>{''.join(g_rows)}</tbody>
@@ -2119,7 +3247,9 @@ def render_html(
                 l_rows = []
                 for l in pm.losers:
                     earn_pill = '<span class="badge badge-primary">YES</span>' if l.has_earnings_in_window else '<span class="badge badge-muted">NO</span>'
-                    l_mcap = (l.market_cap_str or 'n/a').replace('\\$', '$')
+                    l_mcap = (l.market_cap_str or '—').replace('\\$', '$')
+                    l_cause = getattr(l, "catalyst_driver", "") or (l.move_cause_tag if l.move_cause_tag not in (None, "", "Unknown") else "—")
+                    l_cause_td = f'<td style="font-size: 11px; color: var(--text-muted); max-width: 170px; line-height: 1.25;">{l_cause}</td>' if has_move_causes else ""
                     l_rows.append(f"""
                     <tr>
                         <td><strong>{l.symbol}</strong><br><span class="ticker-sub">{l.name[:18]}</span></td>
@@ -2129,7 +3259,7 @@ def render_html(
                         <td class="text-right">{_fmt_pct(l.pct_change)}</td>
                         <td class="text-right font-mono">{l.volume_ratio:.2f}x</td>
                         <td class="text-center">{earn_pill}</td>
-                        <td style="font-size: 11px; color: var(--text-muted); max-width: 140px; line-height: 1.25;">{l.move_cause_tag}</td>
+                        {l_cause_td}
                     </tr>
                     """)
                 body_html.append(f"""
@@ -2146,7 +3276,7 @@ def render_html(
                                     <th class="text-right">Change</th>
                                     <th class="text-right">20d Vol</th>
                                     <th class="text-center">Earnings?</th>
-                                    <th>Cause</th>
+                                    {cause_th}
                                 </tr>
                             </thead>
                             <tbody>{''.join(l_rows)}</tbody>
@@ -2192,48 +3322,133 @@ def render_html(
                 </div>
                 """
 
-            body_html.append(f"""
-            <div class="vix-grid">
-                <div class="vix-metric">
-                    <span class="vix-label">CBOE VIX INDEX</span>
-                    <span class="vix-val font-mono">{sp.vix:.2f}</span>
-                    <span class="vix-sub">Implied Volatility</span>
+            cot_html = ""
+            if getattr(sp, "cot_positions", None):
+                cot_rows = []
+                for cp in sp.cot_positions:
+                    net_str = f"{cp.net_position:+,.0f}" if isinstance(cp.net_position, (int, float)) else str(cp.net_position)
+                    chg_c = "text-green" if cp.net_change_1w > 0 else ("text-red" if cp.net_change_1w < 0 else "text-muted")
+                    chg_str = f"{cp.net_change_1w:+,.0f}" if isinstance(cp.net_change_1w, (int, float)) else str(cp.net_change_1w)
+                    r_cls = "badge-green" if "Long" in cp.regime else ("badge-red" if "Short" in cp.regime else "badge-neutral")
+                    cot_rows.append(f"""
+                    <tr>
+                        <td><strong>{cp.contract_name}</strong> <span class="ticker-sub font-mono">{cp.contract_symbol}</span></td>
+                        <td class="text-right font-mono font-bold">{net_str}</td>
+                        <td class="text-right font-mono {chg_c}">{chg_str}</td>
+                        <td class="text-center font-mono font-bold">{cp.percentile_label}</td>
+                        <td class="text-center"><span class="badge {r_cls}">{cp.regime}</span></td>
+                    </tr>
+                    """)
+                src_cot = getattr(sp, "cot_source", "CFTC Commitments of Traders (Legacy/TFF Public Domain)")
+                cot_html = f"""
+                <h3 class="sub-title">CFTC COT Institutional Futures Positioning</h3>
+                <p class="table-caption">Disaggregated / Legacy Non-Commercial Institutional Positioning across Core Benchmarks &bull; Source: {src_cot}</p>
+                <div class="table-container">
+                    <table class="report-table compact-table">
+                        <thead>
+                            <tr>
+                                <th>Benchmark Futures Contract</th>
+                                <th class="text-right">Non-Commercial Net (Contracts)</th>
+                                <th class="text-right">1W Net Change</th>
+                                <th class="text-center">3-Year %ile</th>
+                                <th class="text-center">Positioning Regime</th>
+                            </tr>
+                        </thead>
+                        <tbody>{''.join(cot_rows)}</tbody>
+                    </table>
                 </div>
-                <div class="vix-metric">
-                    <span class="vix-label">20-DAY REALIZED VOL</span>
-                    <span class="vix-val font-mono">{sp.realized_vol_20d:.2f}%</span>
-                    <span class="vix-sub">Historical Price Variance</span>
-                </div>
-                <div class="vix-metric">
-                    <span class="vix-label">VOLATILITY RISK PREMIUM</span>
-                    <span class="vix-val font-mono {vrp_class}">{sp.vol_risk_premium:+.2f} pts</span>
-                    <span class="vix-sub">VIX &minus; Realized Vol</span>
-                </div>
-                <div class="vix-metric">
-                    <span class="vix-label">VRP REGIME</span>
-                    <span class="vix-val" style="font-size: 15px; margin: 4px 0;">{sp.vol_premium_regime.split('(')[0].strip()}</span>
-                    <span class="vix-sub">Options Pricing Premium</span>
-                </div>
-            </div>
+                """
 
-            {sentiment_table_html}
+            if period.report_type == "weekly":
+                body_html.append(f"""
+                {cot_html}
+                {sentiment_table_html}
 
-            <div class="regime-callout-card" style="margin-top: 14px; padding: 12px 16px; border-radius: 8px; background: rgba(59, 130, 246, 0.08); border-left: 4px solid var(--primary);">
-                <div style="font-size: 13px; line-height: 1.5; color: var(--text-main);">🧭 <strong>Options Pricing Context:</strong> {sp.assessment}</div>
-            </div>
+                <details style="margin-top: 16px;">
+                    <summary>Volatility Risk Premium (VRP) &amp; Options Pricing Reference</summary>
+                    <div class="vix-grid" style="margin-top: 12px;">
+                        <div class="vix-metric">
+                            <span class="vix-label">CBOE VIX INDEX</span>
+                            <span class="vix-val font-mono">{sp.vix:.2f}</span>
+                            <span class="vix-sub">Implied Volatility</span>
+                        </div>
+                        <div class="vix-metric">
+                            <span class="vix-label">20-DAY REALIZED VOL</span>
+                            <span class="vix-val font-mono">{sp.realized_vol_20d:.2f}%</span>
+                            <span class="vix-sub">Historical Price Variance</span>
+                        </div>
+                        <div class="vix-metric">
+                            <span class="vix-label">VOLATILITY RISK PREMIUM</span>
+                            <span class="vix-val font-mono {vrp_class}">{sp.vol_risk_premium:+.2f} pts</span>
+                            <span class="vix-sub">VIX &minus; Realized Vol</span>
+                        </div>
+                        <div class="vix-metric">
+                            <span class="vix-label">VRP REGIME</span>
+                            <span class="vix-val" style="font-size: 15px; margin: 4px 0;">{sp.vol_premium_regime.split('(')[0].strip()}</span>
+                            <span class="vix-sub">Options Pricing Premium</span>
+                        </div>
+                    </div>
+                    <div class="regime-callout-card" style="margin-top: 14px; padding: 12px 16px; border-radius: 8px; background: rgba(59, 130, 246, 0.08); border-left: 4px solid var(--primary);">
+                        <div style="font-size: 13px; line-height: 1.5; color: var(--text-main);">🧭 <strong>Options Pricing Context:</strong> {sp.assessment}</div>
+                    </div>
+                </details>
 
-            <details class="methodology-note" style="margin-top: 16px;">
-                <summary>ℹ️ Volatility Risk Premium (VRP) &amp; Positioning Methodology</summary>
-                <div class="methodology-content">
-                    <p><strong>Volatility Risk Premium (VRP):</strong> Calculated as CBOE VIX (30-day implied volatility) minus trailing 20-day annualized realized volatility of the S&amp;P 500.</p>
-                    <ul style="padding-left: 18px; margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
-                        <li><strong>Positive VRP (&gt; +2.0 pts):</strong> Volatility contango. Market participants are paying normal insurance premiums for index protection, signaling orderly hedging behavior.</li>
-                        <li><strong>Negative VRP (&lt; 0 pts):</strong> Volatility backwardation. Historical realized moves exceed forward implied pricing, reflecting acute liquidation, panic selling, or sudden dislocation.</li>
-                    </ul>
-                    <p style="margin-top: 6px;"><strong>Data Integrity:</strong> In accordance with Ground Rule 2, unverified sentiment feeds render "n/a (source unavailable)" and are excluded from scorecard denominators.</p>
+                <details class="methodology-note" style="margin-top: 16px;">
+                    <summary>ℹ️ Volatility Risk Premium (VRP) &amp; Positioning Methodology</summary>
+                    <div class="methodology-content">
+                        <p><strong>Volatility Risk Premium (VRP):</strong> Calculated as CBOE VIX (30-day implied volatility) minus trailing 20-day annualized realized volatility of the S&amp;P 500.</p>
+                        <ul style="padding-left: 18px; margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
+                            <li><strong>Positive VRP (&gt; +2.0 pts):</strong> Volatility contango. Market participants are paying normal insurance premiums for index protection, signaling orderly hedging behavior.</li>
+                            <li><strong>Negative VRP (&lt; 0 pts):</strong> Volatility backwardation. Historical realized moves exceed forward implied pricing, reflecting acute liquidation, panic selling, or sudden dislocation.</li>
+                        </ul>
+                        <p style="margin-top: 6px;"><strong>Data Integrity:</strong> In accordance with Ground Rule 2, unverified sentiment feeds render "n/a (source unavailable)" and are excluded from scorecard denominators.</p>
+                    </div>
+                </details>
+                """)
+            else:
+                body_html.append(f"""
+                <div class="vix-grid">
+                    <div class="vix-metric">
+                        <span class="vix-label">CBOE VIX INDEX</span>
+                        <span class="vix-val font-mono">{sp.vix:.2f}</span>
+                        <span class="vix-sub">Implied Volatility</span>
+                    </div>
+                    <div class="vix-metric">
+                        <span class="vix-label">20-DAY REALIZED VOL</span>
+                        <span class="vix-val font-mono">{sp.realized_vol_20d:.2f}%</span>
+                        <span class="vix-sub">Historical Price Variance</span>
+                    </div>
+                    <div class="vix-metric">
+                        <span class="vix-label">VOLATILITY RISK PREMIUM</span>
+                        <span class="vix-val font-mono {vrp_class}">{sp.vol_risk_premium:+.2f} pts</span>
+                        <span class="vix-sub">VIX &minus; Realized Vol</span>
+                    </div>
+                    <div class="vix-metric">
+                        <span class="vix-label">VRP REGIME</span>
+                        <span class="vix-val" style="font-size: 15px; margin: 4px 0;">{sp.vol_premium_regime.split('(')[0].strip()}</span>
+                        <span class="vix-sub">Options Pricing Premium</span>
+                    </div>
                 </div>
-            </details>
-            """)
+
+                {cot_html}
+                {sentiment_table_html}
+
+                <div class="regime-callout-card" style="margin-top: 14px; padding: 12px 16px; border-radius: 8px; background: rgba(59, 130, 246, 0.08); border-left: 4px solid var(--primary);">
+                    <div style="font-size: 13px; line-height: 1.5; color: var(--text-main);">🧭 <strong>Options Pricing Context:</strong> {sp.assessment}</div>
+                </div>
+
+                <details class="methodology-note" style="margin-top: 16px;">
+                    <summary>ℹ️ Volatility Risk Premium (VRP) &amp; Positioning Methodology</summary>
+                    <div class="methodology-content">
+                        <p><strong>Volatility Risk Premium (VRP):</strong> Calculated as CBOE VIX (30-day implied volatility) minus trailing 20-day annualized realized volatility of the S&amp;P 500.</p>
+                        <ul style="padding-left: 18px; margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
+                            <li><strong>Positive VRP (&gt; +2.0 pts):</strong> Volatility contango. Market participants are paying normal insurance premiums for index protection, signaling orderly hedging behavior.</li>
+                            <li><strong>Negative VRP (&lt; 0 pts):</strong> Volatility backwardation. Historical realized moves exceed forward implied pricing, reflecting acute liquidation, panic selling, or sudden dislocation.</li>
+                        </ul>
+                        <p style="margin-top: 6px;"><strong>Data Integrity:</strong> In accordance with Ground Rule 2, unverified sentiment feeds render "n/a (source unavailable)" and are excluded from scorecard denominators.</p>
+                    </div>
+                </details>
+                """)
 
         # Section: Tactical Watchlist Panel (Stage 3: Task 3.2)
         elif isinstance(sec.data, WatchlistData):
@@ -2257,17 +3472,17 @@ def render_html(
                 elif it.readiness == "Watch":
                     readiness_badge = '<span class="badge badge-yellow font-bold">Watch</span>'
                 else:
-                    readiness_badge = '<span class="badge badge-neutral" style="color: var(--text-muted); font-size: 11px;">Not ready</span>'
+                    readiness_badge = '<span class="badge badge-neutral" style="color: var(--text-muted);">Not ready</span>'
 
-                # Technical filter badge
-                if "Exception candidate" in it.long_permitted:
-                    dir_badge = '<span class="badge badge-yellow font-bold">Exception candidate (gate Defensive)</span>'
-                elif "BLOCKED" in it.long_permitted or "INACTIVE" in it.long_permitted:
-                    dir_badge = '<span class="badge badge-red font-bold">INACTIVE</span>'
-                elif "SELECTIVE" in it.long_permitted:
+                # Regime context badge
+                if "Outlier Leader" in it.long_permitted or "Exception candidate" in it.long_permitted:
+                    dir_badge = '<span class="badge badge-yellow font-bold">Outlier Leader (Defensive Regime)</span>'
+                elif any(k in it.long_permitted for k in ("Defensive Regime", "BLOCKED", "INACTIVE")):
+                    dir_badge = '<span class="badge badge-red font-bold">DEFENSIVE</span>'
+                elif any(k in it.long_permitted for k in ("Mixed Regime", "SELECTIVE")):
                     dir_badge = '<span class="badge badge-yellow font-bold">SELECTIVE</span>'
                 else:
-                    dir_badge = '<span class="badge badge-green font-bold">ACTIVE</span>'
+                    dir_badge = '<span class="badge badge-green font-bold">SUPPORTIVE</span>'
 
                 if it.next_earnings_date in ("none within 30d", "n/a (source unavailable)", "n/a"):
                     earn_badge = f'<span class="text-muted font-mono" style="font-size: 12px;">{it.next_earnings_date}</span>'
@@ -2288,19 +3503,15 @@ def render_html(
                     <td class="text-center">{readiness_badge}</td>
                     <td class="text-center">{earn_badge}</td>
                     <td class="text-center">{dir_badge}</td>
+                    <td style="font-size: 12px; color: var(--text-muted);">{getattr(it, 'why_flagged', '') or '&mdash;'}</td>
                 </tr>
                 """)
 
-            exc_note = f", {wl.exception_count} Exception Candidates" if getattr(wl, "exception_count", 0) > 0 else ""
+            exc_note = f", {wl.exception_count} Outlier Leaders" if getattr(wl, "exception_count", 0) > 0 else ""
             src_note = f" &bull; {wl.source_label}" if getattr(wl, "source_label", "") else ""
-            monthly_wl_note = '<div style="font-size: 13px; color: var(--text-muted); margin-top: 6px;">💡 <em>Strategic Watchlist Context: For monthly asset allocation, prioritize candidates with sustained 3-month RS outperformance maintaining position above rising 50-day moving averages.</em></div>' if period.report_type == "monthly" else ""
-            body_html.append(f"""
-            <div class="note-box" style="margin-bottom: 16px;">
-                <strong>Tactical Focus Universe:</strong> Tracking {wl.total_count} focus large-cap tickers{src_note}.<br>
-                Market Gate Posture: <strong>{wl.gate_posture}</strong> &bull; Filter Status: <strong>{wl.long_permitted_default}</strong>
-                ({wl.blocked_count} Inactive, {wl.selective_count} Selective, {wl.permitted_count} Active{exc_note}).
-                {monthly_wl_note}
-            </div>
+            monthly_wl_note = '<div style="font-size: 13px; color: var(--text-muted); margin-top: 6px;">💡 <em>Multi-Horizon Universe Context: Highlights equities exhibiting sustained 3-month relative-strength outperformance while holding above rising 50-day moving averages.</em></div>' if period.report_type == "monthly" else ""
+            
+            table_markup = f"""
             <div class="table-container">
                 <table class="report-table">
                     <thead>
@@ -2314,14 +3525,32 @@ def render_html(
                             <th class="text-right">14D ATR%</th>
                             <th class="text-right">RS vs SPY (3M)</th>
                             <th class="text-center">Sector Breadth (&gt;50-DMA)</th>
-                            <th class="text-center">Readiness (Gate Open)</th>
+                            <th class="text-center">Technical Setup</th>
                             <th class="text-center">Next Earnings</th>
-                            <th class="text-center">Filter Status</th>
+                            <th class="text-center">Regime Context</th>
+                            <th>Why flagged</th>
                         </tr>
                     </thead>
-                    <tbody>{''.join(wl_rows) if wl_rows else '<tr><td colspan="12" class="text-center text-muted">No watchlist focus items available.</td></tr>'}</tbody>
+                    <tbody>{''.join(wl_rows) if wl_rows else '<tr><td colspan="13" class="text-center text-muted">No watchlist focus items available.</td></tr>'}</tbody>
                 </table>
             </div>
+            """
+            if period.report_type == "weekly":
+                table_markup = f"""
+                <details style="margin-top: 16px;">
+                    <summary>Focus Equity Screening Matrix &amp; Setups</summary>
+                    {table_markup}
+                </details>
+                """
+
+            body_html.append(f"""
+            <div class="note-box" style="margin-bottom: 16px;">
+                <strong>Focus Equity Universe:</strong> Tracking {wl.total_count} focus large-cap tickers{src_note}.<br>
+                Regime Posture: <strong>{wl.gate_posture}</strong> &bull; Screen Backdrop: <strong>{wl.long_permitted_default}</strong>
+                ({wl.blocked_count} Defensive, {wl.selective_count} Selective, {wl.permitted_count} Supportive{exc_note}).
+                {monthly_wl_note}
+            </div>
+            {table_markup}
             """)
 
         # Section: S&P 500 Valuation vs Rates (CR v2.2 Stage 3 Task 3.1 & Stage 4 Task 4.2)
@@ -2443,7 +3672,7 @@ def render_html(
 
             # 3. Component Indicator Voting Rows
             vote_rows = []
-            for v in cd.scorecard.votes:
+            for v in (cd.scorecard.votes if (cd.scorecard and cd.scorecard.votes) else []):
                 v_class_vote = "text-green font-bold" if v.vote > 0.05 else ("text-red font-bold" if v.vote < -0.05 else "text-muted")
                 v_str = f"{v.vote:+.2f}"
                 vote_rows.append(f"""
@@ -2483,16 +3712,45 @@ def render_html(
             forward_strat_html = ""
             if cd.regime_intelligence:
                 intel = cd.regime_intelligence
+                sec_sectors_link = sec_by_type.get(SectorReportData) or sec_by_type.get(MacroSectionData)
+                sec_link_html = (
+                    f' (see <a href="#section-{sec_sectors_link.section_num}" style="color: var(--primary); text-decoration: underline;">Section {sec_sectors_link.section_num}: {sec_sectors_link.title}</a> for sector momentum details)'
+                    if sec_sectors_link else ""
+                )
                 forward_strat_html = f"""
                 <div class="forward-strategy-card" style="margin-top: 24px; padding: 18px 22px; border-radius: 10px; background: var(--bg-card-subtle); border: 1px solid var(--border); border-left: 4px solid var(--primary);">
                     <h3 style="font-size: 15px; font-weight: 700; margin-bottom: 8px; color: var(--primary); display: flex; align-items: center; gap: 8px;">
-                        <span>🔭</span> Cross-Market Macro Alignment &amp; Execution Posture
+                        <span>🔭</span> Cross-Market Macro Alignment &amp; Market Regime
                     </h3>
                     <p style="font-size: 14px; line-height: 1.5; margin: 0; color: var(--text-main);">
-                        <strong>Alignment:</strong> The technical trend stands at <strong>{cd.verdict.upper()}</strong> ({cd.normalized_score:+.2f}), operating within an active <strong>{intel.summary_badge}</strong> regime. Corporate credit remains <strong>{intel.credit.regime}</strong> ({intel.credit.spread_bps:.0f} bps OAS) with volatility term structure in <strong>{intel.vol_term.structure}</strong> (ratio {intel.vol_term.ratio:.3f}). Tactical sector rotation shows {intel.rotation.rotation_summary} (see <a href="#section-17" style="color: var(--primary); text-decoration: underline;">Section 17: Macro &amp; Economic Events</a> for sector momentum details).
+                        <strong>Alignment:</strong> The technical trend stands at <strong>{cd.verdict.upper()}</strong> ({cd.normalized_score:+.2f}), operating within an active <strong>{intel.summary_badge}</strong> regime. Corporate credit remains <strong>{intel.credit.regime}</strong> ({intel.credit.spread_bps:.0f} bps OAS) with volatility term structure in <strong>{intel.vol_term.structure}</strong> (ratio {intel.vol_term.ratio:.3f}). Tactical sector rotation shows {intel.rotation.rotation_summary}{sec_link_html}.
                     </p>
                 </div>
                 """
+
+            lenses_html = ""
+            lenses = getattr(cd, "cross_strategy_lenses", None)
+            if lenses:
+                lens_cards = []
+                for lens in lenses:
+                    lens_cards.append(f"""
+                    <div style="padding: 14px 16px; border-radius: 8px; background: var(--bg-card-subtle); border: 1px solid var(--border);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px;">
+                            <strong style="font-size: 13px; color: var(--text-main);">{lens.strategy}</strong>
+                            <span class="badge badge-neutral" style="font-size: 11px;">{lens.regime_read}</span>
+                        </div>
+                        <p style="font-size: 13px; line-height: 1.45; margin: 0; color: var(--text-muted);">{lens.synthesis}</p>
+                    </div>
+                    """)
+                lenses_html = f"""
+                <div style="margin-top: 20px;">
+                    <h3 style="font-size: 15px; font-weight: 700; margin-bottom: 10px; color: var(--text-main);">Cross-Strategy Risk &amp; Regime Synthesis</h3>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px;">
+                        {''.join(lens_cards)}
+                    </div>
+                </div>
+                """
+                forward_strat_html = f"{forward_strat_html}{lenses_html}"
 
             conf_label = f'<div class="score-sub font-mono" style="margin-top: 4px; color: var(--text-muted); font-size: 11px;">Confidence: <strong>{cd.scorecard.confidence}</strong></div>' if cd.scorecard and cd.scorecard.confidence else ''
 
@@ -2605,6 +3863,59 @@ def render_html(
 
             conf_html = f'<div style="font-size: 0.82rem; color: var(--text-muted); font-family: var(--font-mono); margin: -8px 0 20px 0;"><strong>Confidence:</strong> {cd.scorecard.confidence}</div>' if cd.scorecard and cd.scorecard.confidence else ''
 
+            if period.report_type == "weekly":
+                scorecard_appendix_html = f"""
+                <details style="margin-top: 18px;">
+                    <summary>Regime Scorecard Category Breakdown, Sensitivity &amp; Indicator Voting Appendix</summary>
+                    <h4 class="sub-title" style="margin-top: 14px;">Macro &amp; Micro Trend Scorecard by Category</h4>
+                    <div class="table-container">
+                        <table class="report-table">
+                            <thead>
+                                <tr>
+                                    <th>Category</th>
+                                    <th class="text-center">Weight Cap</th>
+                                    <th class="text-center">Effective Weight</th>
+                                    <th class="text-center">Category Score</th>
+                                    <th class="text-center">Weighted Score</th>
+                                    <th class="text-center">Status</th>
+                                    <th>Diagnostic Notes / Drivers</th>
+                                </tr>
+                            </thead>
+                            <tbody>{''.join(cat_rows)}</tbody>
+                        </table>
+                    </div>
+                    {sens_html}
+                    {intra_html}
+                    {voting_html}
+                </details>
+                """
+            else:
+                scorecard_appendix_html = f"""
+                <h3 class="sub-title">Macro &amp; Micro Trend Scorecard by Category</h3>
+                <div class="table-container">
+                    <table class="report-table">
+                        <thead>
+                            <tr>
+                                <th>Category</th>
+                                <th class="text-center">Weight Cap</th>
+                                <th class="text-center">Effective Weight</th>
+                                <th class="text-center">Category Score</th>
+                                <th class="text-center">Weighted Score</th>
+                                <th class="text-center">Status</th>
+                                <th>Diagnostic Notes / Drivers</th>
+                            </tr>
+                        </thead>
+                        <tbody>{''.join(cat_rows)}</tbody>
+                    </table>
+                </div>
+
+                {sens_html}
+
+                {intra_html}
+
+                {voting_html}
+                """
+
             body_html.append(f"""
             <div class="verdict-banner" style="border-left-color: {banner_border}; margin-bottom: 14px;">
                 <div class="verdict-box">
@@ -2619,31 +3930,9 @@ def render_html(
             </div>
             {conf_html}
 
-            <h3 class="sub-title">Macro &amp; Micro Trend Scorecard by Category</h3>
-            <div class="table-container">
-                <table class="report-table">
-                    <thead>
-                        <tr>
-                            <th>Category</th>
-                            <th class="text-center">Weight Cap</th>
-                            <th class="text-center">Effective Weight</th>
-                            <th class="text-center">Category Score</th>
-                            <th class="text-center">Weighted Score</th>
-                            <th class="text-center">Status</th>
-                            <th>Diagnostic Notes / Drivers</th>
-                        </tr>
-                    </thead>
-                    <tbody>{''.join(cat_rows)}</tbody>
-                </table>
-            </div>
+            {scorecard_appendix_html}
 
-            {sens_html}
-
-            {intra_html}
-
-            {voting_html}
-
-            <div class="grid-2 drivers-grid">
+            <div class="grid-2 drivers-grid" style="margin-top: 18px;">
                 <div class="driver-card driver-bullish">
                     <h4 class="text-green">🟢 Top Bullish Factors</h4>
                     <ul>{''.join(f'<li>{bf}</li>' for bf in cd.top_bullish_factors)}</ul>
@@ -2661,12 +3950,65 @@ def render_html(
             {forward_strat_html}
             """)
 
+            # Substage 3.3: Historical Seasonality Summary (Complete Calendar Years Only)
+            seas = getattr(cd, "seasonality", None)
+            if seas is not None and getattr(seas, "complete_years_count", 0) > 0:
+                c_win_cls = "badge-bullish" if seas.current_month_win_rate >= 55.0 else ("badge-bearish" if seas.current_month_win_rate <= 45.0 else "badge-neutral")
+                n_win_cls = "badge-bullish" if seas.next_month_win_rate >= 55.0 else ("badge-bearish" if seas.next_month_win_rate <= 45.0 else "badge-neutral")
+                body_html.append(f"""
+                <h3 class="sub-title" style="margin-top: 24px;">S&P 500 Historical Monthly Seasonality (Complete Calendar Years Only)</h3>
+                <div class="alert alert-info" style="margin-bottom: 12px;">
+                    <strong>Historical Seasonality Context (N={seas.complete_years_count} Complete Calendar Years, {seas.history_start_year}–{seas.history_end_year}):</strong><br>
+                    Current month (<strong>{seas.current_month_name}</strong>) historically averages {_fmt_pct(seas.current_month_avg_return)} ({seas.current_month_win_rate:.1f}% win rate, median {_fmt_pct(seas.current_month_median_return)}, IQR {seas.current_month_iqr_return:.2f}%).<br>
+                    Next month (<strong>{seas.next_month_name}</strong>) historically averages {_fmt_pct(seas.next_month_avg_return)} ({seas.next_month_win_rate:.1f}% win rate, median {_fmt_pct(seas.next_month_median_return)}, IQR {seas.next_month_iqr_return:.2f}%).
+                </div>
+                <div class="table-container">
+                    <table class="report-table">
+                        <thead>
+                            <tr>
+                                <th>Calendar Horizon</th>
+                                <th>Month</th>
+                                <th class="text-center">Historical Win %</th>
+                                <th class="text-center">95% Wilson CI</th>
+                                <th class="text-right">Historical Median</th>
+                                <th class="text-right">Historical Mean</th>
+                                <th class="text-right">IQR [P25, P75]</th>
+                                <th class="text-center">Sample Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>Current Month</strong></td>
+                                <td>{seas.current_month_name}</td>
+                                <td class="text-center"><span class="badge {c_win_cls}"><strong>{seas.current_month_win_rate:.1f}%</strong></span></td>
+                                <td class="text-center font-mono text-muted">[{seas.current_month_win_rate_ci_low:.1f}%, {seas.current_month_win_rate_ci_high:.1f}%]</td>
+                                <td class="text-right">{_fmt_pct(seas.current_month_median_return)}</td>
+                                <td class="text-right">{_fmt_pct(seas.current_month_avg_return)}</td>
+                                <td class="text-right font-mono">{seas.current_month_iqr_return:.2f}% <span class="text-muted">[{_fmt_pct(seas.current_month_p25_return)}, {_fmt_pct(seas.current_month_p75_return)}]</span></td>
+                                <td class="text-center font-mono">N={seas.current_month_sample_size} complete yrs</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Next Month</strong></td>
+                                <td>{seas.next_month_name}</td>
+                                <td class="text-center"><span class="badge {n_win_cls}"><strong>{seas.next_month_win_rate:.1f}%</strong></span></td>
+                                <td class="text-center font-mono text-muted">[{seas.next_month_win_rate_ci_low:.1f}%, {seas.next_month_win_rate_ci_high:.1f}%]</td>
+                                <td class="text-right">{_fmt_pct(seas.next_month_median_return)}</td>
+                                <td class="text-right">{_fmt_pct(seas.next_month_avg_return)}</td>
+                                <td class="text-right font-mono">{seas.next_month_iqr_return:.2f}% <span class="text-muted">[{_fmt_pct(seas.next_month_p25_return)}, {_fmt_pct(seas.next_month_p75_return)}]</span></td>
+                                <td class="text-center font-mono">N={seas.next_month_sample_size} complete yrs</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="table-caption" style="margin-top: 6px;"><em>Note: Seasonality calculations evaluate strictly complete calendar years ({seas.history_start_year}–{seas.history_end_year}); the partial in-progress month ({seas.current_month_name} {period.session_date[:4]}) is excluded from historical sample distributions.</em></p>
+                """)
+
             if charts and charts.get("seasonality_heatmap"):
                 body_html.append(_render_chart_html(charts.get("seasonality_heatmap")))
 
         # Section: Footer
         elif isinstance(sec.data, dict) and "disclaimer" in sec.data:
-            disclaimer = sec.data.get("disclaimer", "For informational purposes only. Not financial advice.")
+            disclaimer = sec.data.get("disclaimer", DEFAULT_COMPLIANCE_DISCLAIMER)
             sources = sec.data.get("data_sources", [])
             overall_status = sec.data.get("overall_status", "PARTIAL")
             missing_inputs = sec.data.get("missing_inputs", [])
@@ -2710,6 +4052,14 @@ def render_html(
                 </div>
                 """
 
+                if period.report_type in ("daily", "weekly"):
+                    sources_html = f"""
+                    <details class="methodology-note" style="margin-top: 18px;">
+                        <summary>Data Quality &amp; Provenance Sources</summary>
+                        {sources_html}
+                    </details>
+                    """
+
             body_html.append(f"""
             <footer class="report-footer">
                 <p><strong>Disclaimer:</strong> {disclaimer}</p>
@@ -2728,6 +4078,10 @@ def render_html(
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{rep_title} - {period.session_date}</title>
     <style>
+        html {{
+            font-size: 20px;
+        }}
+
         :root, body.theme-zen {{
             /* Tropical Earth Palette */
             --amber-honey: #eca400;
@@ -2848,7 +4202,7 @@ def render_html(
         }}
 
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        html {{ scroll-behavior: smooth; font-size: 14px; }}
+        html {{ scroll-behavior: smooth; font-size: 93.75%; }}
         
         body {{
             font-family: 'Founders Grotesk', 'Helvetica Neue', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -2868,7 +4222,7 @@ def render_html(
 
         /* --- Sidebar --- */
         .sidebar {{
-            width: 265px;
+            width: 280px;
             background-color: var(--bg-sidebar);
             color: var(--text-sidebar);
             height: 100vh;
@@ -2889,7 +4243,7 @@ def render_html(
 
         .brand {{ margin-bottom: 18px; }}
         .brand h1 {{
-            font-size: 1.25rem;
+            font-size: 1.3rem;
             font-weight: 700;
             letter-spacing: -0.01em;
             line-height: 1.2;
@@ -2897,7 +4251,7 @@ def render_html(
             color: #FFFFFF;
         }}
         .brand p {{
-            font-size: 0.82rem;
+            font-size: 0.88rem;
             color: var(--tropical-teal);
             font-weight: 500;
         }}
@@ -2909,6 +4263,7 @@ def render_html(
             flex-grow: 1;
             margin-bottom: 16px;
             padding-right: 4px;
+            scroll-target-group: auto;
         }}
         
         .nav-menu::-webkit-scrollbar {{ width: 4px; }}
@@ -2916,7 +4271,7 @@ def render_html(
 
         details > summary {{
             list-style: none;
-            font-size: 0.92rem;
+            font-size: 0.96rem;
             font-weight: 700;
             color: var(--amber-honey);
             padding: 9px 10px;
@@ -2936,20 +4291,27 @@ def render_html(
         .nav-link {{
             text-decoration: none;
             color: rgba(255,255,255,0.88);
-            font-size: 0.86rem;
+            font-size: 0.9rem;
             font-weight: 400;
-            padding: 6px 10px 6px 14px;
+            padding: 6px 10px 6px 11px;
+            border-left: 3px solid transparent;
             border-radius: 6px;
             transition: all 0.2s ease;
             display: flex;
             align-items: center;
-            line-height: 1.3;
+            line-height: 1.35;
             margin-bottom: 3px;
         }}
         .nav-link:hover {{
             background-color: rgba(255,255,255,0.1);
             color: #FFFFFF;
             transform: translateX(3px);
+        }}
+        .nav-link:is(:target-current, .target-current) {{
+            color: var(--amber-honey);
+            font-weight: 700;
+            background-color: rgba(236, 164, 0, 0.14);
+            border-left-color: var(--amber-honey);
         }}
 
         .sidebar-footer {{
@@ -2980,10 +4342,10 @@ def render_html(
 
         /* --- Main Content --- */
         .main-content {{
-            margin-left: 265px;
+            margin-left: 280px;
             flex-grow: 1;
             padding: 24px 40px 48px 40px;
-            max-width: 1300px;
+            max-width: 1380px;
             transition: margin-left 0.3s cubic-bezier(0.16, 1, 0.3, 1), max-width 0.3s;
         }}
         .main-content.expanded {{
@@ -3027,7 +4389,7 @@ def render_html(
             cursor: pointer;
             font-weight: 700;
             font-family: inherit;
-            font-size: 0.8rem;
+            font-size: 0.88rem;
             display: flex;
             align-items: center;
             gap: 6px;
@@ -3047,7 +4409,7 @@ def render_html(
             border: 1px solid var(--border);
             border-radius: 6px;
             padding: 6px 12px;
-            font-size: 0.75rem;
+            font-size: 0.84rem;
             font-weight: 600;
             cursor: pointer;
             outline: none;
@@ -3059,7 +4421,7 @@ def render_html(
             color: var(--text-main);
             border-radius: 6px;
             padding: 6px 12px;
-            font-size: 0.75rem;
+            font-size: 0.84rem;
             font-weight: 600;
             cursor: pointer;
             text-decoration: none;
@@ -3099,17 +4461,17 @@ def render_html(
         .section-num {{
             background: var(--bg-sidebar);
             color: #FFF;
-            width: 28px;
-            height: 28px;
+            width: 30px;
+            height: 30px;
             border-radius: 8px;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            font-size: 12px;
+            font-size: 0.85rem;
             font-weight: 700;
         }}
         .section-title {{
-            font-size: 1.25rem;
+            font-size: 1.3rem;
             font-weight: 600;
             letter-spacing: -0.01em;
             color: var(--text-main);
@@ -3117,18 +4479,34 @@ def render_html(
         }}
 
         .badge {{
-            display: inline-block;
-            padding: 4px 8px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            max-width: 100%;
+            padding: 4px 9px;
             border-radius: 6px;
-            font-size: 0.7rem;
+            font-size: 0.74rem;
             font-weight: 700;
+            line-height: 1.25;
             letter-spacing: 0.03em;
             text-transform: uppercase;
+            text-align: center;
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }}
+        .report-table .badge {{
+            white-space: nowrap;
+        }}
+        .report-table td > .badge:only-child {{
+            display: flex;
+            width: 100%;
+            box-sizing: border-box;
         }}
         .badge-primary {{ background: var(--bg-sidebar); color: #FFF; }}
         .badge-green, .badge-bullish {{ background: var(--accent-green-bg); color: var(--accent-green-txt); }}
         .badge-red, .badge-bearish {{ background: var(--accent-red-bg); color: var(--accent-red-txt); }}
-        .badge-amber, .badge-neutral {{ background: var(--accent-amber-bg); color: var(--accent-amber-txt); }}
+        .badge-amber, .badge-neutral, .badge-yellow {{ background: var(--accent-amber-bg); color: var(--accent-amber-txt); }}
+        .badge-muted {{ background: var(--bg-card-subtle); color: var(--text-muted); border: 1px solid var(--border); }}
 
         .text-green {{ color: var(--accent-green-txt); }}
         .text-red {{ color: var(--accent-red-txt); }}
@@ -3162,19 +4540,19 @@ def render_html(
             box-shadow: 0 6px 16px rgba(86, 53, 30, 0.08);
         }}
         .kpi-label {{
-            font-size: 0.7rem;
+            font-size: 0.78rem;
             font-weight: 700;
             letter-spacing: 0.05em;
             color: var(--text-muted);
             text-transform: uppercase;
         }}
         .kpi-val {{
-            font-size: 1.4rem;
+            font-size: 1.5rem;
             font-weight: 600;
             color: var(--text-main);
         }}
         .kpi-sub {{
-            font-size: 0.75rem;
+            font-size: 0.84rem;
             font-weight: 600;
             display: flex;
             align-items: center;
@@ -3201,9 +4579,9 @@ def render_html(
         .kpi-secondary-card:hover {{
             background: var(--bg-card-subtle);
         }}
-        .kpi-secondary-card .kpi-label {{ font-size: 0.65rem; }}
-        .kpi-secondary-card .kpi-val {{ font-size: 1rem; }}
-        .kpi-secondary-card .kpi-sub {{ font-size: 0.7rem; }}
+        .kpi-secondary-card .kpi-label {{ font-size: 0.74rem; }}
+        .kpi-secondary-card .kpi-val {{ font-size: 1.1rem; }}
+        .kpi-secondary-card .kpi-sub {{ font-size: 0.8rem; }}
 
         /* --- Tables --- */
         .table-container {{
@@ -3215,17 +4593,17 @@ def render_html(
         .report-table {{
             width: 100%;
             border-collapse: collapse;
-            font-size: 0.85rem;
+            font-size: 1.0rem;
             text-align: left;
         }}
         .report-table th {{
             background: var(--bg-card-subtle);
             color: var(--text-main);
-            font-size: 0.7rem;
+            font-size: 0.86rem;
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.04em;
-            padding: 10px 12px;
+            padding: 12px 14px;
             border-bottom: 1px solid var(--border);
         }}
         .report-table td {{
@@ -3237,7 +4615,7 @@ def render_html(
         .report-table tbody tr:nth-child(even) {{ background-color: var(--bg-card-subtle); }}
         .report-table tbody tr:hover {{ background-color: rgba(236, 164, 0, 0.08); }}
         .report-table tr:last-child td {{ border-bottom: none; }}
-        .compact-table td, .compact-table th {{ padding: 6px 8px; font-size: 0.8rem; }}
+        .compact-table td, .compact-table th {{ padding: 8px 10px; font-size: 0.95rem; }}
 
         .ticker-circle {{
             width: 24px;
@@ -3280,14 +4658,14 @@ def render_html(
             flex-wrap: wrap;
         }}
         .verdict-label, .score-label {{
-            font-size: 0.7rem;
+            font-size: 0.8rem;
             font-weight: 600;
             color: rgba(255,255,255,0.7);
             letter-spacing: 0.06em;
             text-transform: uppercase;
         }}
         .verdict-badge {{
-            font-size: 0.95rem;
+            font-size: 1.0rem;
             padding: 6px 14px;
             border-radius: 6px;
             font-weight: 600;
@@ -3322,7 +4700,7 @@ def render_html(
             background: var(--bg-card-subtle);
             border: 1px dashed var(--border);
             border-radius: 8px;
-            font-size: 0.8rem;
+            font-size: 0.88rem;
         }}
         .methodology-note summary {{
             cursor: pointer;
@@ -3339,7 +4717,7 @@ def render_html(
         }}
         .methodology-content strong {{ color: var(--text-main); }}
 
-        .alert {{ padding: 12px 16px; border-radius: 8px; font-size: 0.85rem; margin: 12px 0; line-height: 1.5; }}
+        .alert {{ padding: 12px 16px; border-radius: 8px; font-size: 0.92rem; margin: 12px 0; line-height: 1.5; }}
         .alert-info {{ background: var(--bg-card-subtle); border-left: 4px solid var(--tropical-teal); color: var(--text-main); }}
         .alert-warning {{ background: rgba(236, 164, 0, 0.12); color: var(--text-main); border-left: 4px solid var(--amber-honey); }}
         .alert-danger {{ background: rgba(219, 80, 74, 0.12); color: var(--text-main); border-left: 4px solid var(--rosy-copper); }}
@@ -3369,10 +4747,55 @@ def render_html(
 
         .vix-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }}
         .vix-metric {{ background: var(--bg-card-subtle); padding: 14px; border-radius: 8px; display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); }}
-        .vix-label {{ font-size: 0.7rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; }}
+        .vix-header {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }}
+        .vix-label {{ font-size: 0.74rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; }}
         .vix-val {{ font-size: 1.3rem; font-weight: 700; }}
-        .vix-sub {{ font-size: 0.75rem; color: var(--text-muted); }}
-        .vix-desc {{ font-size: 0.75rem; margin-top: 4px; color: var(--text-muted); }}
+        .vix-sub {{ font-size: 0.8rem; color: var(--text-muted); }}
+        .vix-desc {{ font-size: 0.8rem; margin-top: 4px; color: var(--text-muted); }}
+
+        .toggletip-btn {{
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-muted);
+            font-size: 0.72rem;
+            font-weight: 700;
+            font-style: italic;
+            font-family: Georgia, serif;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+        }}
+        .toggletip-btn:hover, .toggletip-btn:focus-visible {{
+            border-color: var(--tropical-teal);
+            color: var(--tropical-teal);
+            outline: none;
+        }}
+        .toggletip-popover {{
+            max-width: min(320px, 85vw);
+            padding: 10px 14px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-main);
+            font-size: 0.8rem;
+            font-weight: 400;
+            line-height: 1.45;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+            inset: auto;
+            margin: 0;
+        }}
+        @supports (position-area: block-start) {{
+            .toggletip-popover {{
+                position-area: block-start;
+                position-try-fallbacks: flip-block, flip-inline;
+            }}
+        }}
 
         .grid-2 {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin-top: 10px; }}
         .tech-card {{
@@ -3383,28 +4806,28 @@ def render_html(
             border: 1px solid var(--border);
         }}
         .tech-header {{ display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }}
-        .tech-price {{ font-size: 1.25rem; font-weight: 700; }}
+        .tech-price {{ font-size: 1.3rem; font-weight: 700; }}
         .metric-group {{ display: flex; flex-direction: column; gap: 6px; }}
-        .metric-title {{ font-size: 0.75rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; }}
-        .metric-row {{ display: flex; justify-content: space-between; font-size: 0.8rem; }}
+        .metric-title {{ font-size: 0.84rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; }}
+        .metric-row {{ display: flex; justify-content: space-between; font-size: 0.88rem; }}
 
-        .mover-period-title {{ font-size: 1rem; font-weight: 700; margin: 20px 0 10px 0; color: var(--text-main); }}
+        .mover-period-title {{ font-size: 1.05rem; font-weight: 700; margin: 20px 0 10px 0; color: var(--text-main); }}
         .movers-split {{ display: flex; flex-direction: column; gap: 20px; }}
         .mover-table-box {{ background: var(--bg-card-subtle); padding: 16px 18px; border-radius: 10px; overflow-x: auto; border: 1px solid var(--border); }}
-        .mover-subheading {{ font-size: 0.85rem; font-weight: 700; margin-bottom: 8px; }}
+        .mover-subheading {{ font-size: 0.92rem; font-weight: 700; margin-bottom: 8px; }}
 
         .drivers-grid {{ margin: 16px 0; }}
         .driver-card {{ padding: 16px; border-radius: 10px; }}
-        .driver-card ul {{ padding-left: 20px; margin-top: 8px; display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; }}
+        .driver-card ul {{ padding-left: 20px; margin-top: 8px; display: flex; flex-direction: column; gap: 4px; font-size: 0.92rem; }}
         .driver-bullish {{ background: var(--accent-green-bg); color: var(--accent-green-txt); }}
         .driver-bearish {{ background: var(--accent-red-bg); color: var(--accent-red-txt); }}
 
         .levels-box {{ background: var(--bg-card-subtle); padding: 14px; border-radius: 8px; border: 1px solid var(--border); }}
-        .levels-box h4 {{ font-size: 0.85rem; font-weight: 700; margin-bottom: 8px; }}
+        .levels-box h4 {{ font-size: 0.92rem; font-weight: 700; margin-bottom: 8px; }}
 
-        .report-footer {{ border-top: 1px solid var(--border); padding-top: 16px; text-align: center; color: var(--text-muted); font-size: 0.8rem; }}
-        .footer-sub {{ font-size: 0.7rem; margin-top: 4px; }}
-        .table-caption {{ font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px; }}
+        .report-footer {{ border-top: 1px solid var(--border); padding-top: 16px; text-align: center; color: var(--text-muted); font-size: 0.88rem; }}
+        .footer-sub {{ font-size: 0.78rem; margin-top: 4px; }}
+        .table-caption {{ font-size: 0.84rem; color: var(--text-muted); margin-bottom: 8px; }}
     </style>
 </head>
 <body class="theme-zen">
@@ -3447,6 +4870,157 @@ def render_html(
                 document.documentElement.classList.add('dark');
                 document.body.classList.add('dark');
                 document.body.classList.remove('theme-zen');
+            }}
+
+            const navLinks = Array.from(document.querySelectorAll('.nav-menu .nav-link'));
+            const sections = Array.from(document.querySelectorAll('main section[id^="section-"]'));
+            if (!navLinks.length || !sections.length) return;
+
+            const revealInSidebar = (link) => {{
+                if (!link) return;
+                const details = link.closest('details');
+                if (details && !details.open) details.open = true;
+                const navMenu = link.closest('.nav-menu');
+                if (!navMenu) return;
+                const menuRect = navMenu.getBoundingClientRect();
+                const linkRect = link.getBoundingClientRect();
+                const pad = 12;
+                if (linkRect.top < menuRect.top + pad) {{
+                    navMenu.scrollBy({{ top: linkRect.top - menuRect.top - pad, behavior: 'smooth' }});
+                }} else if (linkRect.bottom > menuRect.bottom - pad) {{
+                    navMenu.scrollBy({{ top: linkRect.bottom - menuRect.bottom + pad, behavior: 'smooth' }});
+                }}
+            }};
+
+            const isNearBottom = () =>
+                window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 40;
+
+            if (window.CSS && CSS.supports('scroll-target-group: auto')) {{
+                let lastRevealed = null;
+                const syncAriaCurrent = () => {{
+                    let currentLink = document.querySelector('.nav-menu .nav-link:target-current');
+                    if (!currentLink && isNearBottom()) {{
+                        currentLink = navLinks[navLinks.length - 1];
+                    }}
+                    navLinks.forEach((link) => {{
+                        const isActive = link === currentLink;
+                        link.setAttribute('aria-current', isActive ? 'true' : 'false');
+                        if (isActive && link !== lastRevealed) {{
+                            lastRevealed = link;
+                            revealInSidebar(link);
+                        }}
+                    }});
+                }};
+                let rafId = 0;
+                const onScroll = () => {{
+                    if (rafId) return;
+                    rafId = requestAnimationFrame(() => {{
+                        rafId = 0;
+                        syncAriaCurrent();
+                    }});
+                }};
+                syncAriaCurrent();
+                document.addEventListener('scrollend', syncAriaCurrent);
+                window.addEventListener('scroll', onScroll, {{ passive: true }});
+            }} else if ('IntersectionObserver' in window) {{
+                let lastActiveId = null;
+                const setActive = (id) => {{
+                    if (id === lastActiveId) return;
+                    lastActiveId = id;
+                    navLinks.forEach((link) => {{
+                        const isActive = link.getAttribute('href') === `#${{id}}`;
+                        link.classList.toggle('target-current', isActive);
+                        link.setAttribute('aria-current', isActive ? 'true' : 'false');
+                        if (isActive) revealInSidebar(link);
+                    }});
+                }};
+                setActive(sections[0].id);
+                const observer = new IntersectionObserver((entries) => {{
+                    if (isNearBottom()) {{
+                        setActive(sections[sections.length - 1].id);
+                        return;
+                    }}
+                    entries.forEach((entry) => {{
+                        if (entry.isIntersecting) {{
+                            setActive(entry.target.id);
+                        }}
+                    }});
+                }}, {{ rootMargin: '-50% 0px -50% 0px', threshold: 0 }});
+                sections.forEach((section) => observer.observe(section));
+                let rafId = 0;
+                window.addEventListener('scroll', () => {{
+                    if (rafId) return;
+                    rafId = requestAnimationFrame(() => {{
+                        rafId = 0;
+                        if (isNearBottom()) {{
+                            setActive(sections[sections.length - 1].id);
+                        }}
+                    }});
+                }}, {{ passive: true }});
+            }}
+
+            // Toggletip support: aria-expanded sync, hint->auto fallback, and hover/position fallback
+            const tipBtns = Array.from(document.querySelectorAll('.toggletip-btn[interestfor]'));
+            if (tipBtns.length) {{
+                const probe = document.createElement('div');
+                probe.popover = 'hint';
+                if (probe.popover !== 'hint') {{
+                    document.addEventListener('beforetoggle', (e) => {{
+                        const pop = e.target;
+                        if (pop.getAttribute('popover') === 'hint' &&
+                            document.querySelector(`[popovertarget="${{CSS.escape(pop.id)}}"]`)) {{
+                            if (e.newState === 'open') pop.popover = 'auto';
+                        }}
+                    }}, true);
+                }}
+                document.addEventListener('toggle', (e) => {{
+                    const pop = e.target;
+                    if (!pop.id) return;
+                    const isOpen = e.newState === 'open';
+                    document.querySelectorAll(`.toggletip-btn[interestfor="${{CSS.escape(pop.id)}}"]`).forEach((btn) => {{
+                        btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+                    }});
+                }}, true);
+
+                const hasInterest = 'interestForElement' in HTMLButtonElement.prototype;
+                const hasAnchorPos = window.CSS && CSS.supports('position-area: block-start');
+                const positionPopover = (btn, pop) => {{
+                    if (hasAnchorPos) return;
+                    const r = btn.getBoundingClientRect();
+                    pop.style.position = 'fixed';
+                    pop.style.left = `${{Math.max(12, Math.min(window.innerWidth - 332, r.right - 280))}}px`;
+                    const topAbove = r.top - pop.offsetHeight - 8;
+                    pop.style.top = `${{topAbove >= 12 ? topAbove : r.bottom + 8}}px`;
+                }};
+
+                tipBtns.forEach((btn) => {{
+                    const pop = document.getElementById(btn.getAttribute('interestfor'));
+                    if (!pop) return;
+                    btn.setAttribute('aria-expanded', 'false');
+                    pop.addEventListener('toggle', (e) => {{
+                        if (e.newState === 'open') positionPopover(btn, pop);
+                    }});
+                    if (!hasInterest && typeof pop.showPopover === 'function') {{
+                        let hideTimer = 0;
+                        const openTip = () => {{
+                            clearTimeout(hideTimer);
+                            if (!pop.matches(':popover-open')) pop.showPopover();
+                            positionPopover(btn, pop);
+                        }};
+                        const scheduleClose = () => {{
+                            clearTimeout(hideTimer);
+                            hideTimer = setTimeout(() => {{
+                                if (pop.matches(':popover-open')) pop.hidePopover();
+                            }}, 140);
+                        }};
+                        btn.addEventListener('mouseenter', openTip);
+                        btn.addEventListener('focus', openTip);
+                        btn.addEventListener('mouseleave', scheduleClose);
+                        btn.addEventListener('blur', scheduleClose);
+                        pop.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+                        pop.addEventListener('mouseleave', scheduleClose);
+                    }}
+                }});
             }}
         }})();
     </script>

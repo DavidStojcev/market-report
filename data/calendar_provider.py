@@ -8,6 +8,7 @@ from pathlib import Path
 import random
 import time
 from typing import Any, Dict, List, Optional
+import pandas as pd
 import requests
 
 from data.macro_base import EarningsEvent, EconCalendarProvider, MacroEvent, ReportedEarningsEvent
@@ -60,17 +61,19 @@ class OfficialScheduleCalendarProvider(EconCalendarProvider):
             {"date": "2026-11-12", "time": "08:30 ET", "title": "Consumer Price Index (CPI YoY)", "category": "inflation", "importance": "high", "prior": 4.02, "forecast": 3.90, "unit": "%", "source": "U.S. Bureau of Labor Statistics (BLS)", "source_name": "U.S. Bureau of Labor Statistics (BLS)", "source_url": "https://www.bls.gov/cpi/", "retrieval_timestamp": "2026-10-30T16:00:00Z"},
             {"date": "2026-11-12", "time": "13:00 ET", "title": "Fed Vice Chair Jefferson Discussion", "category": "rates", "importance": "medium", "prior": None, "forecast": None, "unit": "", "source": "Federal Reserve Board Event Calendar", "source_name": "Federal Reserve Board Event Calendar", "source_url": "https://www.federalreserve.gov/newsevents/calendar.htm", "retrieval_timestamp": "2026-10-30T16:00:00Z"},
             {"date": "2026-11-13", "time": "08:30 ET", "title": "Producer Price Index (PPI MoM)", "category": "inflation", "importance": "medium", "prior": 0.20, "forecast": 0.20, "unit": "%", "source": "U.S. Bureau of Labor Statistics (BLS)", "source_name": "U.S. Bureau of Labor Statistics (BLS)", "source_url": "https://www.bls.gov/ppi/", "retrieval_timestamp": "2026-10-30T16:00:00Z"},
-            {"date": "2026-11-17", "time": "08:30 ET", "title": "Advance Retail Sales (MoM)", "category": "activity", "importance": "medium", "prior": 0.40, "forecast": 0.30, "unit": "%", "source": "U.S. Census Bureau", "source_name": "U.S. Census Bureau", "source_url": "https://www.census.gov/retail/", "retrieval_timestamp": "2026-10-30T16:00:00Z"},
-            {"date": "2026-11-18", "time": "14:00 ET", "title": "FOMC Minutes (October 27-28 Meeting)", "category": "rates", "importance": "medium", "prior": None, "forecast": None, "unit": "", "source": "Federal Reserve FOMC", "source_name": "Federal Reserve FOMC", "source_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm", "retrieval_timestamp": "2026-10-30T16:00:00Z"},
-            {"date": "2026-11-19", "time": "08:30 ET", "title": "Initial Jobless Claims", "category": "labor", "importance": "medium", "prior": 194.0, "forecast": 220.0, "unit": "k", "source": "U.S. Department of Labor (DOL)", "source_name": "U.S. Department of Labor (DOL)", "source_url": "https://www.dol.gov/ui/data.pdf", "retrieval_timestamp": "2026-10-30T16:00:00Z"},
-            {"date": "2026-11-25", "time": "08:30 ET", "title": "Real GDP (Second Estimate Q3 Annualized QoQ)", "category": "growth", "importance": "medium", "prior": 2.80, "forecast": 2.80, "unit": "%", "source": "U.S. Bureau of Economic Analysis (BEA)", "source_name": "U.S. Bureau of Economic Analysis (BEA)", "source_url": "https://www.bea.gov/data/gdp/gross-domestic-product", "retrieval_timestamp": "2026-10-30T16:00:00Z"},
-            {"date": "2026-11-27", "time": "08:30 ET", "title": "PCE Price Index (Core PCE YoY)", "category": "inflation", "importance": "high", "prior": 3.20, "forecast": 3.10, "unit": "%", "source": "U.S. Bureau of Economic Analysis (BEA)", "source_name": "U.S. Bureau of Economic Analysis (BEA)", "source_url": "https://www.bea.gov/data/personal-consumption-expenditures-price-index", "retrieval_timestamp": "2026-10-30T16:00:00Z"},
-            {"date": "2026-12-01", "time": "10:00 ET", "title": "ISM Manufacturing PMI", "category": "activity", "importance": "medium", "prior": 48.6, "forecast": 49.0, "unit": "index", "source": "Institute for Supply Management (ISM)", "source_name": "Institute for Supply Management (ISM)", "source_url": "https://www.ismworld.org", "retrieval_timestamp": "2026-10-30T16:00:00Z"},
-            {"date": "2026-12-03", "time": "10:00 ET", "title": "ISM Services PMI", "category": "activity", "importance": "medium", "prior": 54.9, "forecast": 54.5, "unit": "index", "source": "Institute for Supply Management (ISM)", "source_name": "Institute for Supply Management (ISM)", "source_url": "https://www.ismworld.org", "retrieval_timestamp": "2026-10-30T16:00:00Z"},
-            {"date": "2026-12-04", "time": "08:30 ET", "title": "Employment Situation (Nonfarm Payrolls & Unemployment Rate)", "category": "labor", "importance": "high", "prior": 120.0, "forecast": 135.0, "unit": "k", "source": "U.S. Bureau of Labor Statistics (BLS)", "source_name": "U.S. Bureau of Labor Statistics (BLS)", "source_url": "https://www.bls.gov/news.release/empsit.nr0.htm", "retrieval_timestamp": "2026-10-30T16:00:00Z"},
-            {"date": "2026-12-09", "time": "14:00 ET", "title": "FOMC Rate Decision & Summary of Economic Projections", "category": "rates", "importance": "high", "prior": 4.00, "forecast": 4.00, "unit": "%", "source": "Federal Reserve FOMC", "source_name": "Federal Reserve FOMC", "source_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm", "retrieval_timestamp": "2026-10-30T16:00:00Z"},
-            {"date": "2026-12-11", "time": "08:30 ET", "title": "Consumer Price Index (CPI YoY)", "category": "inflation", "importance": "high", "prior": 3.90, "forecast": 3.80, "unit": "%", "source": "U.S. Bureau of Labor Statistics (BLS)", "source_name": "U.S. Bureau of Labor Statistics (BLS)", "source_url": "https://www.bls.gov/cpi/", "retrieval_timestamp": "2026-10-30T16:00:00Z"},
-            {"date": "2027-01-27", "time": "14:00 ET", "title": "FOMC Rate Decision & Statement", "category": "rates", "importance": "high", "prior": 4.00, "forecast": 4.00, "unit": "%", "source": "Federal Reserve FOMC", "source_name": "Federal Reserve FOMC", "source_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm", "retrieval_timestamp": "2026-10-30T16:00:00Z"},
+            {"date": "2026-11-17", "time": "08:30 ET", "title": "Advance Retail Sales (MoM)", "category": "activity", "importance": "high", "prior": 0.40, "forecast": None, "unit": "%", "source": "U.S. Census Bureau", "source_name": "U.S. Census Bureau", "source_url": "https://www.census.gov/retail/", "retrieval_timestamp": "2026-11-13T16:00:00Z"},
+            {"date": "2026-11-18", "time": "14:00 ET", "title": "FOMC Minutes (October 27-28 Meeting)", "category": "rates", "importance": "medium", "prior": None, "forecast": None, "unit": "", "source": "Federal Reserve FOMC", "source_name": "Federal Reserve FOMC", "source_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm", "retrieval_timestamp": "2026-11-13T16:00:00Z"},
+            {"date": "2026-11-19", "time": "08:30 ET", "title": "Initial Jobless Claims", "category": "labor", "importance": "medium", "prior": 194.0, "forecast": None, "unit": "k", "source": "U.S. Department of Labor (DOL)", "source_name": "U.S. Department of Labor (DOL)", "source_url": "https://www.dol.gov/ui/data.pdf", "retrieval_timestamp": "2026-11-13T16:00:00Z"},
+            {"date": "2026-11-19", "time": "08:30 ET", "title": "Housing Starts & Building Permits", "category": "activity", "importance": "medium", "prior": 1.35, "forecast": None, "unit": "M", "source": "U.S. Census Bureau", "source_name": "U.S. Census Bureau", "source_url": "https://www.census.gov/construction/nrc/", "retrieval_timestamp": "2026-11-13T16:00:00Z"},
+            {"date": "2026-11-25", "time": "08:30 ET", "title": "Real GDP (Second Estimate Q3 Annualized QoQ)", "category": "growth", "importance": "high", "prior": 2.80, "forecast": None, "unit": "%", "source": "U.S. Bureau of Economic Analysis (BEA)", "source_name": "U.S. Bureau of Economic Analysis (BEA)", "source_url": "https://www.bea.gov/data/gdp/gross-domestic-product", "retrieval_timestamp": "2026-11-13T16:00:00Z"},
+            {"date": "2026-11-27", "time": "08:30 ET", "title": "PCE Price Index (Core PCE YoY)", "category": "inflation", "importance": "high", "prior": 3.20, "forecast": None, "unit": "%", "source": "U.S. Bureau of Economic Analysis (BEA)", "source_name": "U.S. Bureau of Economic Analysis (BEA)", "source_url": "https://www.bea.gov/data/personal-consumption-expenditures-price-index", "retrieval_timestamp": "2026-11-13T16:00:00Z"},
+            {"date": "2026-12-01", "time": "10:00 ET", "title": "ISM Manufacturing PMI", "category": "activity", "importance": "high", "prior": 48.6, "forecast": None, "unit": "index", "source": "Institute for Supply Management (ISM)", "source_name": "Institute for Supply Management (ISM)", "source_url": "https://www.ismworld.org", "retrieval_timestamp": "2026-11-13T16:00:00Z"},
+            {"date": "2026-12-03", "time": "10:00 ET", "title": "ISM Services PMI", "category": "activity", "importance": "medium", "prior": 54.9, "forecast": None, "unit": "index", "source": "Institute for Supply Management (ISM)", "source_name": "Institute for Supply Management (ISM)", "source_url": "https://www.ismworld.org", "retrieval_timestamp": "2026-11-13T16:00:00Z"},
+            {"date": "2026-12-04", "time": "08:30 ET", "title": "Employment Situation (Nonfarm Payrolls & Unemployment Rate)", "category": "labor", "importance": "high", "prior": 120.0, "forecast": None, "unit": "k", "source": "U.S. Bureau of Labor Statistics (BLS)", "source_name": "U.S. Bureau of Labor Statistics (BLS)", "source_url": "https://www.bls.gov/news.release/empsit.nr0.htm", "retrieval_timestamp": "2026-11-13T16:00:00Z"},
+            {"date": "2026-12-09", "time": "14:00 ET", "title": "FOMC Rate Decision & Summary of Economic Projections", "category": "rates", "importance": "high", "prior": 4.00, "forecast": None, "unit": "%", "source": "Federal Reserve FOMC", "source_name": "Federal Reserve FOMC", "source_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm", "retrieval_timestamp": "2026-11-13T16:00:00Z"},
+            {"date": "2026-12-10", "time": "08:30 ET", "title": "Consumer Price Index (CPI YoY)", "category": "inflation", "importance": "high", "prior": 3.90, "forecast": None, "unit": "%", "source": "U.S. Bureau of Labor Statistics (BLS)", "source_name": "U.S. Bureau of Labor Statistics (BLS)", "source_url": "https://www.bls.gov/cpi/", "retrieval_timestamp": "2026-11-13T16:00:00Z"},
+            {"date": "2026-12-11", "time": "08:30 ET", "title": "Producer Price Index (PPI MoM)", "category": "inflation", "importance": "medium", "prior": 0.20, "forecast": None, "unit": "%", "source": "U.S. Bureau of Labor Statistics (BLS)", "source_name": "U.S. Bureau of Labor Statistics (BLS)", "source_url": "https://www.bls.gov/ppi/", "retrieval_timestamp": "2026-11-13T16:00:00Z"},
+            {"date": "2027-01-27", "time": "14:00 ET", "title": "FOMC Rate Decision & Statement", "category": "rates", "importance": "high", "prior": 4.00, "forecast": None, "unit": "%", "source": "Federal Reserve FOMC", "source_name": "Federal Reserve FOMC", "source_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm", "retrieval_timestamp": "2026-11-13T16:00:00Z"},
         ]
 
         # Published official earnings dates for key index constituents (trailing window + forward lookahead)
@@ -98,9 +101,26 @@ class OfficialScheduleCalendarProvider(EconCalendarProvider):
             {"symbol": "ANET", "name": "Arista Networks", "date": "2026-11-03", "hour": "amc", "market_cap": 2.16e11},
             {"symbol": "QCOM", "name": "Qualcomm", "date": "2026-11-04", "hour": "amc", "market_cap": 1.95e11},
             {"symbol": "BRK-B", "name": "Berkshire Hathaway", "date": "2026-11-07", "hour": "saturday", "market_cap": 1.17e12},
+            {"symbol": "DIS", "name": "The Walt Disney Company", "date": "2026-11-11", "hour": "bmo", "market_cap": 2.02e11},
+            {"symbol": "CSCO", "name": "Cisco Systems Inc.", "date": "2026-11-12", "hour": "amc", "market_cap": 2.31e11},
+            {"symbol": "AMAT", "name": "Applied Materials Inc.", "date": "2026-11-13", "hour": "amc", "market_cap": 1.55e11},
+            # Late-November & December 2026 scheduled earnings
+            {"symbol": "HD", "name": "Home Depot Inc.", "date": "2026-11-17", "hour": "bmo", "market_cap": 4.05e11},
+            {"symbol": "LOW", "name": "Lowe's Companies Inc.", "date": "2026-11-18", "hour": "bmo", "market_cap": 1.52e11},
+            {"symbol": "NVDA", "name": "NVIDIA Corporation", "date": "2026-11-18", "hour": "amc", "market_cap": 3.55e12},
+            {"symbol": "TGT", "name": "Target Corporation", "date": "2026-11-19", "hour": "bmo", "market_cap": 7.1e10},
+            {"symbol": "WMT", "name": "Walmart Inc.", "date": "2026-11-19", "hour": "bmo", "market_cap": 6.85e11},
+            {"symbol": "PANW", "name": "Palo Alto Networks Inc.", "date": "2026-11-19", "hour": "amc", "market_cap": 1.28e11},
+            {"symbol": "DE", "name": "Deere & Company", "date": "2026-11-20", "hour": "bmo", "market_cap": 1.18e11},
+            {"symbol": "INTU", "name": "Intuit Inc.", "date": "2026-11-20", "hour": "amc", "market_cap": 1.85e11},
+            {"symbol": "DELL", "name": "Dell Technologies Inc.", "date": "2026-11-24", "hour": "amc", "market_cap": 9.4e10},
+            {"symbol": "CRM", "name": "Salesforce Inc.", "date": "2026-12-02", "hour": "amc", "market_cap": 3.15e11},
+            {"symbol": "AVGO", "name": "Broadcom Inc.", "date": "2026-12-10", "hour": "amc", "market_cap": 8.45e11},
+            {"symbol": "COST", "name": "Costco Wholesale Corporation", "date": "2026-12-11", "hour": "amc", "market_cap": 4.12e11},
+            {"symbol": "MU", "name": "Micron Technology Inc.", "date": "2026-12-17", "hour": "amc", "market_cap": 1.19e11},
         ]
 
-        # Large caps that reported in the trailing October window with official EPS/Revenue surprises and guidance (Stage 4)
+        # Large caps that reported in the trailing window with official EPS/Revenue surprises and guidance
         self._reported_earnings = [
             {"symbol": "MSFT", "name": "Microsoft Corporation", "date": "2026-10-28", "hour": "amc", "market_cap": 3.25e12, "eps_surprise": 4.8, "rev_surprise": 1.5, "guidance": "Raised"},
             {"symbol": "GOOGL", "name": "Alphabet Inc.", "date": "2026-10-28", "hour": "amc", "market_cap": 2.15e12, "eps_surprise": 8.2, "rev_surprise": 2.3, "guidance": "Maintained"},
@@ -115,6 +135,14 @@ class OfficialScheduleCalendarProvider(EconCalendarProvider):
             {"symbol": "PNR", "name": "Pentair plc", "date": "2026-10-27", "hour": "bmo", "market_cap": 9.0e9, "eps_surprise": 6.4, "rev_surprise": 1.8, "guidance": "Raised"},
             {"symbol": "GEN", "name": "Gen Digital", "date": "2026-10-29", "hour": "amc", "market_cap": 1.49e10, "eps_surprise": 3.2, "rev_surprise": 0.5, "guidance": "Maintained"},
             {"symbol": "GPN", "name": "Global Payments", "date": "2026-10-29", "hour": "bmo", "market_cap": 2.27e10, "eps_surprise": 2.9, "rev_surprise": 0.2, "guidance": "Maintained"},
+            {"symbol": "AAPL", "name": "Apple Inc.", "date": "2026-11-02", "hour": "amc", "market_cap": 5.08e12, "eps_surprise": 5.4, "rev_surprise": 1.2, "guidance": "Maintained"},
+            {"symbol": "PLTR", "name": "Palantir Technologies", "date": "2026-11-02", "hour": "amc", "market_cap": 4.71e11, "eps_surprise": 14.3, "rev_surprise": 4.1, "guidance": "Raised"},
+            {"symbol": "AMD", "name": "Advanced Micro Devices", "date": "2026-11-03", "hour": "amc", "market_cap": 8.29e11, "eps_surprise": 3.1, "rev_surprise": 1.4, "guidance": "Maintained"},
+            {"symbol": "ANET", "name": "Arista Networks", "date": "2026-11-03", "hour": "amc", "market_cap": 2.16e11, "eps_surprise": 5.3, "rev_surprise": 3.8, "guidance": "Raised"},
+            {"symbol": "QCOM", "name": "Qualcomm", "date": "2026-11-04", "hour": "amc", "market_cap": 1.95e11, "eps_surprise": 4.7, "rev_surprise": 2.2, "guidance": "Raised"},
+            {"symbol": "DIS", "name": "The Walt Disney Company", "date": "2026-11-11", "hour": "bmo", "market_cap": 2.02e11, "eps_surprise": 3.6, "rev_surprise": 1.2, "guidance": "Raised"},
+            {"symbol": "CSCO", "name": "Cisco Systems Inc.", "date": "2026-11-12", "hour": "amc", "market_cap": 2.31e11, "eps_surprise": 4.6, "rev_surprise": 1.5, "guidance": "Raised"},
+            {"symbol": "AMAT", "name": "Applied Materials Inc.", "date": "2026-11-13", "hour": "amc", "market_cap": 1.55e11, "eps_surprise": 5.9, "rev_surprise": 2.1, "guidance": "Maintained"},
         ]
 
     def get_recent_reported_earnings(self, start_date: str, end_date: str, symbols: Optional[List[str]] = None) -> List[ReportedEarningsEvent]:
@@ -141,13 +169,152 @@ class OfficialScheduleCalendarProvider(EconCalendarProvider):
     def get_recent_releases(self, start_date: str, end_date: str) -> List[MacroEvent]:
         return []
 
+    def _generate_official_schedule_events(self, start_date: str, end_date: str) -> List[Dict[str, Any]]:
+        """Generate dynamic US macro release dates from official BLS/BEA/DOL/ISM cadence rules."""
+        generated: List[Dict[str, Any]] = []
+        try:
+            start_dt = pd.to_datetime(start_date) + pd.Timedelta(days=1)
+            end_dt = pd.to_datetime(end_date)
+            if start_dt > end_dt:
+                return generated
+
+            def _roll_weekday(d: pd.Timestamp) -> pd.Timestamp:
+                if d.weekday() == 5:
+                    return d + pd.Timedelta(days=2)
+                if d.weekday() == 6:
+                    return d + pd.Timedelta(days=1)
+                return d
+
+            # 1. Weekly Initial Jobless Claims every Thursday
+            for d in pd.date_range(start_dt, end_dt, freq="D"):
+                if d.weekday() == 3:
+                    generated.append({
+                        "date": d.strftime("%Y-%m-%d"),
+                        "time": "08:30 ET",
+                        "title": "Initial Jobless Claims",
+                        "category": "labor",
+                        "importance": "medium",
+                        "prior": None,
+                        "forecast": None,
+                        "unit": "k",
+                        "source": "U.S. Department of Labor (DOL)",
+                        "source_name": "U.S. Department of Labor (DOL)",
+                        "source_url": "https://www.dol.gov/ui/data.pdf",
+                        "retrieval_timestamp": f"{start_date}T16:00:00Z",
+                    })
+
+            # 2. Monthly rule-based anchors across each spanned month
+            m_cursor = start_dt.replace(day=1)
+            while m_cursor <= end_dt:
+                bdays = pd.bdate_range(m_cursor, m_cursor + pd.offsets.MonthEnd(0))
+                if len(bdays) >= 1:
+                    generated.append({
+                        "date": bdays[0].strftime("%Y-%m-%d"),
+                        "time": "10:00 ET",
+                        "title": "ISM Manufacturing PMI",
+                        "category": "activity",
+                        "importance": "high",
+                        "prior": None,
+                        "forecast": None,
+                        "unit": "index",
+                        "source": "Institute for Supply Management (ISM)",
+                        "source_name": "Institute for Supply Management (ISM)",
+                        "source_url": "https://www.ismworld.org",
+                        "retrieval_timestamp": f"{start_date}T16:00:00Z",
+                    })
+                if len(bdays) >= 3:
+                    generated.append({
+                        "date": bdays[2].strftime("%Y-%m-%d"),
+                        "time": "10:00 ET",
+                        "title": "ISM Services PMI",
+                        "category": "activity",
+                        "importance": "medium",
+                        "prior": None,
+                        "forecast": None,
+                        "unit": "index",
+                        "source": "Institute for Supply Management (ISM)",
+                        "source_name": "Institute for Supply Management (ISM)",
+                        "source_url": "https://www.ismworld.org",
+                        "retrieval_timestamp": f"{start_date}T16:00:00Z",
+                    })
+                # First Friday: Employment Situation
+                first_fri = m_cursor + pd.Timedelta(days=(4 - m_cursor.weekday()) % 7)
+                generated.append({
+                    "date": first_fri.strftime("%Y-%m-%d"),
+                    "time": "08:30 ET",
+                    "title": "Employment Situation (Nonfarm Payrolls & Unemployment Rate)",
+                    "category": "labor",
+                    "importance": "high",
+                    "prior": None,
+                    "forecast": None,
+                    "unit": "k",
+                    "source": "U.S. Bureau of Labor Statistics (BLS)",
+                    "source_name": "U.S. Bureau of Labor Statistics (BLS)",
+                    "source_url": "https://www.bls.gov/news.release/empsit.nr0.htm",
+                    "retrieval_timestamp": f"{start_date}T16:00:00Z",
+                })
+                # Mid-month CPI (~12th weekday) & Retail Sales (~16th weekday) & Late-month Core PCE (~27th weekday)
+                cpi_dt = _roll_weekday(m_cursor.replace(day=12))
+                ppi_dt = _roll_weekday(cpi_dt + pd.Timedelta(days=1))
+                ret_dt = _roll_weekday(m_cursor.replace(day=16))
+                pce_dt = _roll_weekday(m_cursor.replace(day=27))
+                for dt_ev, title_ev, cat_ev, imp_ev, url_ev, src_ev in [
+                    (cpi_dt, "Consumer Price Index (CPI YoY)", "inflation", "high", "https://www.bls.gov/cpi/", "U.S. Bureau of Labor Statistics (BLS)"),
+                    (ppi_dt, "Producer Price Index (PPI MoM)", "inflation", "medium", "https://www.bls.gov/ppi/", "U.S. Bureau of Labor Statistics (BLS)"),
+                    (ret_dt, "Advance Retail Sales (MoM)", "activity", "high", "https://www.census.gov/retail/", "U.S. Census Bureau"),
+                    (pce_dt, "PCE Price Index (Core PCE YoY)", "inflation", "high", "https://www.bea.gov/data/personal-consumption-expenditures-price-index", "U.S. Bureau of Economic Analysis (BEA)"),
+                ]:
+                    generated.append({
+                        "date": dt_ev.strftime("%Y-%m-%d"),
+                        "time": "08:30 ET",
+                        "title": title_ev,
+                        "category": cat_ev,
+                        "importance": imp_ev,
+                        "prior": None,
+                        "forecast": None,
+                        "unit": "%",
+                        "source": src_ev,
+                        "source_name": src_ev,
+                        "source_url": url_ev,
+                        "retrieval_timestamp": f"{start_date}T16:00:00Z",
+                    })
+                m_cursor = (m_cursor + pd.Timedelta(days=32)).replace(day=1)
+        except Exception as exc:
+            logger.debug("Dynamic official schedule generation skipped: %s", exc)
+        return generated
+
     def get_upcoming_events(self, start_date: str, end_date: str, min_importance: str = "medium") -> List[MacroEvent]:
         results: List[MacroEvent] = []
-        for ev in self._scheduled_events:
+        seen_keys = set()
+        seen_monthly = set()
+        monthly_series_prefixes = (
+            "consumer price index",
+            "producer price index",
+            "advance retail sales",
+            "ism manufacturing pmi",
+            "ism services pmi",
+            "employment situation",
+            "pce price index",
+            "real gdp",
+        )
+        merged_events = list(self._scheduled_events) + self._generate_official_schedule_events(start_date, end_date)
+        for ev in merged_events:
             # Strictly after start_date (upcoming events cannot be dated on or before report date)
             if start_date < ev["date"] <= end_date:
+                base_title = ev["title"].split("(")[0].strip().lower()
+                dedupe_key = (ev["date"], base_title)
+                if dedupe_key in seen_keys:
+                    continue
+                if any(base_title.startswith(p) for p in monthly_series_prefixes):
+                    m_key = (ev["date"][:7], base_title)
+                    if m_key in seen_monthly:
+                        continue
+                    seen_monthly.add(m_key)
+                seen_keys.add(dedupe_key)
                 if min_importance == "high" and ev["importance"] != "high":
                     continue
+                fc_val = ev.get("forecast")
+                cons_src = ev.get("consensus_source") or ("Official Schedule / Survey" if fc_val is not None else "—")
                 results.append(
                     MacroEvent(
                         event_id=ev["title"].lower().replace(" ", "_"),
@@ -156,7 +323,7 @@ class OfficialScheduleCalendarProvider(EconCalendarProvider):
                         date=ev["date"],
                         time_et=ev["time"],
                         actual=None,
-                        forecast=ev.get("forecast"),
+                        forecast=fc_val,
                         previous=ev.get("prior"),
                         unit=ev.get("unit", ""),
                         surprise_flag="n/a",
@@ -166,24 +333,43 @@ class OfficialScheduleCalendarProvider(EconCalendarProvider):
                         source=ev.get("source", "Official U.S. Schedule"),
                         source_name=ev.get("source_name", ev.get("source", "Official U.S. Schedule")),
                         source_url=ev.get("source_url", "https://www.federalreserve.gov"),
-                        retrieval_timestamp=ev.get("retrieval_timestamp", "2026-10-30T16:00:00Z"),
+                        retrieval_timestamp=ev.get("retrieval_timestamp", f"{start_date}T16:00:00Z"),
+                        consensus_source=cons_src,
                     )
                 )
+        results.sort(key=lambda e: (e.date, e.time_et))
         return results
 
     def get_upcoming_earnings(self, start_date: str, end_date: str, symbols: Optional[List[str]] = None) -> List[EarningsEvent]:
         symbols_set = set(symbols) if symbols else None
         results: List[EarningsEvent] = []
-        for ev in self._scheduled_earnings:
-            if start_date <= ev["date"] <= end_date:
-                if symbols_set and ev["symbol"] not in symbols_set:
+        seen_syms = set()
+        combined = list(self._scheduled_earnings)
+        # Optional cached yfinance earnings supplement (.cache/earnings_calendar.json)
+        cache_file = Path(".cache/earnings_calendar.json")
+        if cache_file.exists():
+            try:
+                with open(cache_file, "r", encoding="utf-8") as cf:
+                    cached_rows = json.load(cf)
+                if isinstance(cached_rows, list):
+                    combined.extend(cached_rows)
+            except Exception as exc:
+                logger.debug("Could not read optional earnings cache: %s", exc)
+        for ev in combined:
+            sym = ev.get("symbol", "")
+            if start_date <= ev.get("date", "") <= end_date:
+                if symbols_set and sym not in symbols_set:
                     continue
+                dedupe = (sym, ev["date"])
+                if dedupe in seen_syms:
+                    continue
+                seen_syms.add(dedupe)
                 results.append(
                     EarningsEvent(
-                        symbol=ev["symbol"],
-                        name=ev["name"],
+                        symbol=sym,
+                        name=ev.get("name", sym),
                         date=ev["date"],
-                        hour=ev["hour"],
+                        hour=ev.get("hour", "amc"),
                         market_cap=ev.get("market_cap", 0.0),
                     )
                 )
@@ -302,6 +488,7 @@ class FinnhubCalendarProvider(EconCalendarProvider):
                     source_name=item.get("source_name") or item.get("source") or "Finnhub Economic API",
                     source_url=item.get("source_url") or "https://finnhub.io/docs/api/economic-calendar",
                     retrieval_timestamp=item.get("retrieval_timestamp") or "2026-10-30T16:00:00Z",
+                    consensus_source="Finnhub Economic API" if estimate is not None else "—",
                 )
             )
 
@@ -366,6 +553,7 @@ class FinnhubCalendarProvider(EconCalendarProvider):
                     source_name=item.get("source_name") or item.get("source") or "Finnhub Economic API",
                     source_url=item.get("source_url") or "https://finnhub.io/docs/api/economic-calendar",
                     retrieval_timestamp=item.get("retrieval_timestamp") or "2026-10-30T16:00:00Z",
+                    consensus_source="Finnhub Economic API" if estimate is not None else "—",
                 )
             )
 

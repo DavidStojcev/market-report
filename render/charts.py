@@ -822,7 +822,16 @@ def generate_seasonality_heatmap(
         monthly = sub.resample("ME").last()
         monthly_ret = monthly.pct_change() * 100.0
 
-        years = sorted(list(set(monthly_ret.index.year)))[-lookback_years:]
+        all_years = sorted(list(set(monthly_ret.index.year)))
+        complete_years = [y for y in all_years if y < curr_dt.year]
+        if not complete_years:
+            complete_years = all_years
+
+        if lookback_years and lookback_years < len(complete_years):
+            years = complete_years[-lookback_years:]
+        else:
+            years = complete_years
+
         months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
         matrix = np.full((len(years), 12), np.nan)
@@ -838,6 +847,10 @@ def generate_seasonality_heatmap(
 
         if matrix.shape[0] == 0:
             return GeneratedChart(key=chart_key, title=title, caption=caption, is_available=False, error_message="Seasonality matrix empty.")
+
+        n_years = len(year_labels)
+        title = f"S&P 500 Historical Monthly Return Matrix ({n_years} Complete Calendar Years: {year_labels[0]}–{year_labels[-1]})" if n_years > 1 else f"S&P 500 Historical Monthly Return Matrix ({n_years}-Year Seasonality)"
+        caption = f"Historical monthly return distribution across {n_years} complete calendar years prior to {as_of_date} (excluding partial in-progress month)."
 
         fig, ax = plt.subplots(figsize=(10.5, 5.2))
         _apply_neutral_theme(fig, ax)
@@ -890,40 +903,42 @@ def generate_all_report_charts(
     charts_dir = output_dir / f"{period.session_date}_charts" if output_dir else None
 
     lookback_bars = 252 if period.report_type == "monthly" else 130
+    is_daily = period.report_type == "daily"
 
-    # 1. S&P 500 Technicals
-    p_spx = (charts_dir / "spx_technicals.png") if charts_dir else None
-    c_spx = generate_index_technicals_chart(
-        df=core_bars.get("^GSPC"),
-        symbol="^GSPC",
-        name="S&P 500",
-        as_of_date=period.session_date,
-        lookback_bars=lookback_bars,
-        output_path=p_spx,
-    )
-    charts_dict["spx_technicals"] = c_spx
+    if not is_daily:
+        # 1. S&P 500 Technicals
+        p_spx = (charts_dir / "spx_technicals.png") if charts_dir else None
+        c_spx = generate_index_technicals_chart(
+            df=core_bars.get("^GSPC"),
+            symbol="^GSPC",
+            name="S&P 500",
+            as_of_date=period.session_date,
+            lookback_bars=lookback_bars,
+            output_path=p_spx,
+        )
+        charts_dict["spx_technicals"] = c_spx
 
-    # 2. Nasdaq-100 Technicals
-    p_ndx = (charts_dir / "ndx_technicals.png") if charts_dir else None
-    c_ndx = generate_index_technicals_chart(
-        df=core_bars.get("^NDX"),
-        symbol="^NDX",
-        name="Nasdaq-100",
-        as_of_date=period.session_date,
-        lookback_bars=lookback_bars,
-        output_path=p_ndx,
-    )
-    charts_dict["ndx_technicals"] = c_ndx
+        # 2. Nasdaq-100 Technicals
+        p_ndx = (charts_dir / "ndx_technicals.png") if charts_dir else None
+        c_ndx = generate_index_technicals_chart(
+            df=core_bars.get("^NDX"),
+            symbol="^NDX",
+            name="Nasdaq-100",
+            as_of_date=period.session_date,
+            lookback_bars=lookback_bars,
+            output_path=p_ndx,
+        )
+        charts_dict["ndx_technicals"] = c_ndx
 
-    # 3. Sector Performance
-    p_sec = (charts_dir / "sector_performance.png") if charts_dir else None
-    c_sec = generate_sector_performance_chart(
-        sector_rows=sector_rows,
-        period_name=period.report_type.capitalize(),
-        as_of_date=period.session_date,
-        output_path=p_sec,
-    )
-    charts_dict["sector_performance"] = c_sec
+        # 3. Sector Performance
+        p_sec = (charts_dir / "sector_performance.png") if charts_dir else None
+        c_sec = generate_sector_performance_chart(
+            sector_rows=sector_rows,
+            period_name=period.report_type.capitalize(),
+            as_of_date=period.session_date,
+            output_path=p_sec,
+        )
+        charts_dict["sector_performance"] = c_sec
 
     # 4. Market Breadth Over Time
     p_br = (charts_dir / "breadth_history.png") if charts_dir else None
@@ -935,7 +950,7 @@ def generate_all_report_charts(
     )
     charts_dict["breadth_history"] = c_br
 
-    # 5. VIX Regime
+    # 5. VIX Regime (available across Daily/Weekly/Monthly for Chart of the Day / Volatility)
     p_vix = (charts_dir / "vix_regime.png") if charts_dir else None
     c_vix = generate_vix_chart(
         vix_df=core_bars.get("^VIX"),
@@ -945,15 +960,16 @@ def generate_all_report_charts(
     )
     charts_dict["vix_regime"] = c_vix
 
-    # 6. Rates & Curve Spread
-    p_rates = (charts_dir / "rates_yield_curve.png") if charts_dir else None
-    c_rates = generate_rates_curve_chart(
-        fred_provider=fred_provider,
-        as_of_date=period.session_date,
-        lookback_days=180 if period.report_type != "monthly" else 365,
-        output_path=p_rates,
-    )
-    charts_dict["rates_yield_curve"] = c_rates
+    if not is_daily:
+        # 6. Rates & Curve Spread
+        p_rates = (charts_dir / "rates_yield_curve.png") if charts_dir else None
+        c_rates = generate_rates_curve_chart(
+            fred_provider=fred_provider,
+            as_of_date=period.session_date,
+            lookback_days=180 if period.report_type != "monthly" else 365,
+            output_path=p_rates,
+        )
+        charts_dict["rates_yield_curve"] = c_rates
 
     # 7. Top Movers
     p_mov = (charts_dir / f"{period.report_type}_movers.png") if charts_dir else None
@@ -966,35 +982,36 @@ def generate_all_report_charts(
     )
     charts_dict["top_movers"] = c_mov
 
-    # 8. Sector Rotation Multi-Timeframe Heatmap
-    p_sec_hm = (charts_dir / "sector_timeframe_heatmap.png") if charts_dir else None
-    c_sec_hm = generate_sector_timeframe_heatmap(
-        core_bars=core_bars,
-        sector_rows=sector_rows,
-        as_of_date=period.session_date,
-        output_path=p_sec_hm,
-    )
-    charts_dict["sector_timeframe_heatmap"] = c_sec_hm
+    if not is_daily:
+        # 8. Sector Rotation Multi-Timeframe Heatmap
+        p_sec_hm = (charts_dir / "sector_timeframe_heatmap.png") if charts_dir else None
+        c_sec_hm = generate_sector_timeframe_heatmap(
+            core_bars=core_bars,
+            sector_rows=sector_rows,
+            as_of_date=period.session_date,
+            output_path=p_sec_hm,
+        )
+        charts_dict["sector_timeframe_heatmap"] = c_sec_hm
 
-    # 9. Sector Constituent Breadth & Technical Health Heatmap
-    p_sec_br = (charts_dir / "sector_breadth_heatmap.png") if charts_dir else None
-    c_sec_br = generate_sector_breadth_heatmap(
-        equity_bars=equity_bars,
-        as_of_date=period.session_date,
-        constituents=constituents,
-        output_path=p_sec_br,
-    )
-    charts_dict["sector_breadth_heatmap"] = c_sec_br
+        # 9. Sector Constituent Breadth & Technical Health Heatmap
+        p_sec_br = (charts_dir / "sector_breadth_heatmap.png") if charts_dir else None
+        c_sec_br = generate_sector_breadth_heatmap(
+            equity_bars=equity_bars,
+            as_of_date=period.session_date,
+            constituents=constituents,
+            output_path=p_sec_br,
+        )
+        charts_dict["sector_breadth_heatmap"] = c_sec_br
 
-    # 10. S&P 500 Historical Monthly Seasonality Heatmap
-    p_seas = (charts_dir / "seasonality_heatmap.png") if charts_dir else None
-    c_seas = generate_seasonality_heatmap(
-        spx_df=core_bars.get("^GSPC") if "^GSPC" in core_bars else core_bars.get("SPY"),
-        as_of_date=period.session_date,
-        lookback_years=10,
-        output_path=p_seas,
-    )
-    charts_dict["seasonality_heatmap"] = c_seas
+        # 10. S&P 500 Historical Monthly Seasonality Heatmap
+        p_seas = (charts_dir / "seasonality_heatmap.png") if charts_dir else None
+        c_seas = generate_seasonality_heatmap(
+            spx_df=core_bars.get("^GSPC") if "^GSPC" in core_bars else core_bars.get("SPY"),
+            as_of_date=period.session_date,
+            lookback_years=10,
+            output_path=p_seas,
+        )
+        charts_dict["seasonality_heatmap"] = c_seas
 
     logger.info("Generated %d chart visualizations in %s", len(charts_dict), charts_dir)
     return charts_dict

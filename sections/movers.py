@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
@@ -27,6 +27,7 @@ class MoverItem:
     market_cap: float
     has_earnings_in_window: bool = False
     move_cause_tag: str = "Unknown"
+    catalyst_driver: str = ""
     market_cap_str: str = ""
     is_unconfirmed_outlier: bool = False
 
@@ -121,7 +122,7 @@ def _generate_movers_theme_summary(
             if has_earnings:
                 parts.append(f"Losers reflect post-earnings selloff / guidance cuts across {top_sec}: {', '.join(sec_movers)}")
             else:
-                parts.append(f"Losers reflect multiple compression across {top_sec} sub-industries: {', '.join(sec_movers)}")
+                parts.append(f"Losers concentrated in {top_sec} sub-industries: {', '.join(sec_movers)}")
         else:
             sub_list = [f"{get_theme(l)} ({l.symbol})" for l in losers[:3]]
             parts.append(f"Losers led by {', '.join(sub_list)}")
@@ -199,6 +200,35 @@ def _calculate_mover_stats(
     else:
         cause_tag = "Unknown"
 
+    theme_label = DEFAULT_THEME_MAP.get(symbol, sector or "Sector")
+    closes_s = sub["Close"].dropna()
+    high_252 = float(closes_s.tail(252).max()) if not closes_s.empty else close
+    low_252 = float(closes_s.tail(252).min()) if not closes_s.empty else close
+    sma50 = float(closes_s.tail(50).mean()) if len(closes_s) >= 20 else close
+
+    if earnings_in_window:
+        if pct_change >= 0:
+            catalyst_driver = f"Earnings / guidance catalyst ({vol_ratio:.1f}x vol, {theme_label})"
+        else:
+            catalyst_driver = f"Post-earnings selloff / guidance cuts ({vol_ratio:.1f}x vol, {theme_label})"
+    elif is_outlier:
+        catalyst_driver = cause_tag
+    else:
+        if pct_change > 0 and close >= 0.985 * high_252:
+            catalyst_driver = f"52W high breakout in {theme_label} ({vol_ratio:.1f}x vol)"
+        elif pct_change < 0 and close <= 1.015 * low_252:
+            catalyst_driver = f"52W low breakdown in {theme_label} ({vol_ratio:.1f}x vol)"
+        elif pct_change > 0 and base_close < sma50 <= close:
+            catalyst_driver = f"50-DMA reclaim in {theme_label} ({vol_ratio:.1f}x vol)"
+        elif pct_change < 0 and base_close >= sma50 > close:
+            catalyst_driver = f"50-DMA support break in {theme_label} ({vol_ratio:.1f}x vol)"
+        elif vol_ratio >= 2.0:
+            catalyst_driver = f"{theme_label} {'advance' if pct_change >= 0 else 'pullback'} on heavy volume ({vol_ratio:.1f}x avg)"
+        else:
+            vol_desc = "above-average volume" if vol_ratio >= 1.2 else ("normal volume" if vol_ratio >= 0.8 else "light volume")
+            move_word = f"{'advance' if pct_change >= 0 else 'pullback'} on {vol_desc}"
+            catalyst_driver = f"{theme_label} {move_word} ({vol_ratio:.1f}x vol)"
+
     return MoverItem(
         symbol=symbol,
         name=name,
@@ -211,6 +241,7 @@ def _calculate_mover_stats(
         market_cap=market_cap,
         has_earnings_in_window=earnings_in_window,
         move_cause_tag=cause_tag,
+        catalyst_driver=catalyst_driver,
         market_cap_str=_fmt_mcap(market_cap),
         is_unconfirmed_outlier=is_outlier,
     )
@@ -224,6 +255,7 @@ def build_movers(
     as_of_session: str,
     movers_cfg: MoversConfig,
     earnings_symbols: Optional[set] = None,
+    calendar_provider: Optional[Any] = None,
 ) -> SectionResult:
     """Build top gainers and losers for day, week, and month across universe."""
     try:
@@ -237,6 +269,32 @@ def build_movers(
         day_base_dt = pd.to_datetime(day_period.baseline_date)
         week_base_dt = pd.to_datetime(week_period.baseline_date)
         month_base_dt = pd.to_datetime(month_period.baseline_date)
+
+        def _window_earnings_syms(start_d: str, end_d: str) -> set:
+            if calendar_provider is None:
+                return set(earnings_symbols) if earnings_symbols else set()
+            syms: set = set()
+            if hasattr(calendar_provider, "get_upcoming_earnings"):
+                try:
+                    for ev in calendar_provider.get_upcoming_earnings(start_date=start_d, end_date=end_d) or []:
+                        ev_d = str(getattr(ev, "date", ""))
+                        if start_d <= ev_d <= end_d and getattr(ev, "symbol", None):
+                            syms.add(ev.symbol.upper())
+                except Exception as exc:
+                    logger.debug("Movers upcoming earnings lookup failed: %s", exc)
+            if hasattr(calendar_provider, "get_recent_reported_earnings"):
+                try:
+                    for ev in calendar_provider.get_recent_reported_earnings(start_date=start_d, end_date=end_d) or []:
+                        ev_d = str(getattr(ev, "date", ""))
+                        if start_d <= ev_d <= end_d and getattr(ev, "symbol", None):
+                            syms.add(ev.symbol.upper())
+                except Exception as exc:
+                    logger.debug("Movers recent earnings lookup failed: %s", exc)
+            return syms
+
+        day_earn_syms = _window_earnings_syms(day_period.baseline_date, as_of_session)
+        week_earn_syms = _window_earnings_syms(week_period.baseline_date, as_of_session)
+        month_earn_syms = _window_earnings_syms(month_period.baseline_date, as_of_session)
 
         const_map = {c.symbol: c for c in constituents}
 
@@ -257,20 +315,20 @@ def build_movers(
             sector = c.sector if c else "Unknown"
             info = ticker_infos.get(symbol, {})
             mcap = float(info.get("marketCap", 0) or 0)
-            is_earnings = symbol in earnings_symbols if earnings_symbols else False
+            sym_up = symbol.upper()
 
             # Day
-            d_item = _calculate_mover_stats(df, symbol, name, sector, mcap, session_dt, day_base_dt, movers_cfg, earnings_in_window=is_earnings)
+            d_item = _calculate_mover_stats(df, symbol, name, sector, mcap, session_dt, day_base_dt, movers_cfg, earnings_in_window=(sym_up in day_earn_syms))
             if d_item:
                 day_items.append(d_item)
 
             # Week
-            w_item = _calculate_mover_stats(df, symbol, name, sector, mcap, session_dt, week_base_dt, movers_cfg, earnings_in_window=is_earnings)
+            w_item = _calculate_mover_stats(df, symbol, name, sector, mcap, session_dt, week_base_dt, movers_cfg, earnings_in_window=(sym_up in week_earn_syms))
             if w_item:
                 week_items.append(w_item)
 
             # Month
-            m_item = _calculate_mover_stats(df, symbol, name, sector, mcap, session_dt, month_base_dt, movers_cfg, earnings_in_window=is_earnings)
+            m_item = _calculate_mover_stats(df, symbol, name, sector, mcap, session_dt, month_base_dt, movers_cfg, earnings_in_window=(sym_up in month_earn_syms))
             if m_item:
                 month_items.append(m_item)
 
@@ -291,6 +349,21 @@ def build_movers(
         d_gainers, d_losers = extract_top(day_items)
         w_gainers, w_losers = extract_top(week_items)
         m_gainers, m_losers = extract_top(month_items)
+
+        def _enrich_cohort_sympathy(movers_list: List[MoverItem]) -> None:
+            theme_counts: Dict[str, int] = {}
+            for m in movers_list:
+                th = DEFAULT_THEME_MAP.get(m.symbol, m.sector or "Sector")
+                theme_counts[th] = theme_counts.get(th, 0) + 1
+            for m in movers_list:
+                if m.has_earnings_in_window or m.is_unconfirmed_outlier:
+                    continue
+                th = DEFAULT_THEME_MAP.get(m.symbol, m.sector or "Sector")
+                if theme_counts.get(th, 0) >= 2 and "cohort sympathy" not in m.catalyst_driver:
+                    m.catalyst_driver = f"{m.catalyst_driver} · {th} cohort sympathy"
+
+        for grp in (d_gainers, d_losers, w_gainers, w_losers, m_gainers, m_losers):
+            _enrich_cohort_sympathy(grp)
 
         if not d_gainers and not w_gainers and not m_gainers:
             return SectionResult(

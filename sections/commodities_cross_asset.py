@@ -33,10 +33,144 @@ class EnergyShockIndicator:
 
 
 @dataclass
+class CrossAssetPlumbingData:
+    copper_gold_ratio: Optional[float] = None      # (HG=F * 1000) / GC=F
+    copper_gold_3m_chg_pct: Optional[float] = None
+    nominal_10y_yield: Optional[float] = None
+    yield_10y_13w_bps: Optional[float] = None
+    copper_gold_regime: str = "Unavailable"
+    stock_bond_corr_60d: Optional[float] = None    # Rolling 60D SPY vs TLT return correlation
+    stock_bond_corr_prev_60d: Optional[float] = None
+    stock_bond_regime: str = "Unavailable"
+    tlt_period_ret: Optional[float] = None
+    tlt_3m_ret: Optional[float] = None
+    assessment: str = ""
+
+
+@dataclass
 class CommoditiesCrossAssetData:
     as_of_date: str
     items: List[CrossAssetExpandedItem] = field(default_factory=list)
     energy_shock: Optional[EnergyShockIndicator] = None
+    plumbing: Optional[CrossAssetPlumbingData] = None
+
+
+def compute_cross_asset_plumbing(
+    bars: Dict[str, pd.DataFrame],
+    as_of_dt: pd.Timestamp,
+    base_dt: pd.Timestamp,
+    macro_data: Optional[Any] = None,
+) -> Optional[CrossAssetPlumbingData]:
+    """
+    Compute cross-asset macro regime plumbing strictly from local PIT bars:
+    1) Copper/Gold ratio (x1000) vs. 10Y Treasury yield 13-week divergence.
+    2) 60-day rolling equity/duration correlation (SPY vs. TLT daily returns).
+    """
+    fr = getattr(macro_data, "fed_rates", None) if macro_data else None
+    y10 = getattr(fr, "yield_10y", None) if fr else None
+    y10_13w_delta = getattr(fr, "yield_10y_13w_delta", None) if fr else None
+    y10_13w_bps = round(y10_13w_delta * 100.0, 1) if y10_13w_delta is not None else None
+
+    # 1. Copper/Gold Ratio (HG=F in $/lb, GC=F in $/oz -> ratio * 1000)
+    cg_ratio: Optional[float] = None
+    cg_3m_pct: Optional[float] = None
+    cg_regime = "Unavailable"
+    hg_df = bars.get("HG=F")
+    gc_df = bars.get("GC=F")
+    if hg_df is not None and not hg_df.empty and gc_df is not None and not gc_df.empty:
+        hg_sub = hg_df[hg_df.index <= as_of_dt]["Close"].dropna()
+        gc_sub = gc_df[gc_df.index <= as_of_dt]["Close"].dropna()
+        aligned_cg = pd.concat([hg_sub.rename("hg"), gc_sub.rename("gc")], axis=1).dropna()
+        aligned_cg = aligned_cg[aligned_cg["gc"] > 0]
+        if len(aligned_cg) >= 3:
+            ratio_series = (aligned_cg["hg"] * 1000.0) / aligned_cg["gc"]
+            cg_ratio = round(float(ratio_series.iloc[-1]), 3)
+            idx_3m = max(0, len(ratio_series) - 1 - 63)
+            base_ratio = float(ratio_series.iloc[idx_3m])
+            if base_ratio > 0:
+                cg_3m_pct = round(((cg_ratio - base_ratio) / base_ratio) * 100.0, 2)
+
+            if cg_3m_pct is not None and y10_13w_bps is not None:
+                if cg_3m_pct >= 3.0 and y10_13w_bps >= 15.0:
+                    cg_regime = "Reflationary Growth Alignment"
+                elif cg_3m_pct <= -3.0 and y10_13w_bps >= 15.0:
+                    cg_regime = "Yield-Metal Divergence (Rates Pressure)"
+                elif cg_3m_pct >= 3.0 and y10_13w_bps <= -15.0:
+                    cg_regime = "Disinflationary Growth Bid"
+                elif cg_3m_pct <= -3.0 and y10_13w_bps <= -15.0:
+                    cg_regime = "Growth Cooling / Flight-to-Safety"
+                else:
+                    cg_regime = "Balanced Macro-Rates Alignment"
+            elif cg_3m_pct is not None:
+                cg_regime = "Reflationary Impulse" if cg_3m_pct >= 3.0 else ("Deflationary Cooling" if cg_3m_pct <= -3.0 else "Range-Bound")
+
+    # 2. 60D Rolling Stock-Bond Correlation (SPY vs TLT)
+    corr_60d: Optional[float] = None
+    corr_prev_60d: Optional[float] = None
+    sb_regime = "Unavailable"
+    tlt_p_ret: Optional[float] = None
+    tlt_3m_ret: Optional[float] = None
+
+    spy_df = bars.get("SPY")
+    tlt_df = bars.get("TLT")
+    if tlt_df is not None and not tlt_df.empty:
+        tlt_sub = tlt_df[tlt_df.index <= as_of_dt]
+        if len(tlt_sub) >= 3:
+            tlt_now = float(tlt_sub["Close"].iloc[-1])
+            tlt_base_slice = tlt_sub[tlt_sub.index <= base_dt]
+            tlt_base = float(tlt_base_slice["Close"].iloc[-1]) if not tlt_base_slice.empty else tlt_now
+            if tlt_base > 0:
+                tlt_p_ret = round(((tlt_now - tlt_base) / tlt_base) * 100.0, 2)
+            tlt_3m_ret = round(compute_lookback_return(tlt_sub, as_of_dt, lookback_bars=63), 2)
+
+    if spy_df is not None and not spy_df.empty and tlt_df is not None and not tlt_df.empty:
+        spy_ret = spy_df[spy_df.index <= as_of_dt]["Close"].pct_change()
+        tlt_ret = tlt_df[tlt_df.index <= as_of_dt]["Close"].pct_change()
+        aligned_sb = pd.concat([spy_ret.rename("spy"), tlt_ret.rename("tlt")], axis=1).dropna()
+        if len(aligned_sb) >= 30:
+            win = min(60, len(aligned_sb))
+            curr_val = aligned_sb.tail(win)["spy"].corr(aligned_sb.tail(win)["tlt"])
+            if pd.notna(curr_val):
+                corr_60d = round(float(curr_val), 3)
+            if len(aligned_sb) >= 80:
+                prev_win = aligned_sb.iloc[-80:-20]
+                prev_val = prev_win["spy"].corr(prev_win["tlt"])
+                if pd.notna(prev_val):
+                    corr_prev_60d = round(float(prev_val), 3)
+
+            if corr_60d is not None:
+                if corr_60d >= 0.25:
+                    sb_regime = "Positive (Rate-Driven — Duration Not Hedging Equities)"
+                elif corr_60d <= -0.25:
+                    sb_regime = "Negative (Classic Stock-Bond Diversification Active)"
+                else:
+                    sb_regime = "Near-Zero / Transitional"
+
+    if cg_ratio is None and corr_60d is None:
+        return None
+
+    parts: List[str] = []
+    if cg_ratio is not None:
+        cg_chg_s = f"{cg_3m_pct:+.2f}%" if cg_3m_pct is not None else "n/a"
+        y10_s = f"{y10:.2f}% ({y10_13w_bps:+.0f} bps 13W)" if (y10 is not None and y10_13w_bps is not None) else (f"{y10:.2f}%" if y10 is not None else "n/a")
+        parts.append(f"Copper/Gold (x1000) sits at {cg_ratio:.3f} ({cg_chg_s} 3M) vs. 10Y Treasury at {y10_s} [{cg_regime}].")
+    if corr_60d is not None:
+        prev_s = f" (prior 60D: {corr_prev_60d:+.2f})" if corr_prev_60d is not None else ""
+        parts.append(f"60-day SPY/TLT return correlation is {corr_60d:+.2f}{prev_s}: {sb_regime}.")
+
+    return CrossAssetPlumbingData(
+        copper_gold_ratio=cg_ratio,
+        copper_gold_3m_chg_pct=cg_3m_pct,
+        nominal_10y_yield=round(float(y10), 2) if y10 is not None else None,
+        yield_10y_13w_bps=y10_13w_bps,
+        copper_gold_regime=cg_regime,
+        stock_bond_corr_60d=corr_60d,
+        stock_bond_corr_prev_60d=corr_prev_60d,
+        stock_bond_regime=sb_regime,
+        tlt_period_ret=tlt_p_ret,
+        tlt_3m_ret=tlt_3m_ret,
+        assessment=" ".join(parts),
+    )
 
 
 def build_commodities_cross_asset(
@@ -174,10 +308,19 @@ def build_commodities_cross_asset(
             assessment=assess,
         )
 
+        # Phase 3A: Cross-Asset Plumbing (Copper/Gold vs 10Y Yield + 60D Rolling SPY/TLT Correlation)
+        plumbing = compute_cross_asset_plumbing(
+            bars=bars,
+            as_of_dt=as_of_dt,
+            base_dt=base_dt,
+            macro_data=macro_data,
+        )
+
         data = CommoditiesCrossAssetData(
             as_of_date=as_of_date,
             items=results,
             energy_shock=energy_shock,
+            plumbing=plumbing,
         )
 
         return SectionResult(

@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 import logging
 from typing import Any, Dict, List, Optional
+import numpy as np
 import pandas as pd
 
 from data.constituents import Constituent
@@ -132,7 +133,7 @@ def build_earnings_layer(
                 c_item, mcap = top_map.get(ev.symbol, (None, ev.market_cap))
                 if (mcap is None or mcap <= 0.0) and ev.market_cap > 0.0:
                     mcap = ev.market_cap
-                is_saturday = ev.hour.lower() in ("sat", "saturday") or pd.to_datetime(ev.date).dayofweek == 5
+                is_saturday = ev.hour.lower() in ("sat", "saturday") or pd.to_datetime(ev.date).day_of_week == 5
                 if is_saturday:
                     timing_str = "Saturday"
                 elif ev.hour.lower() == "bmo":
@@ -199,21 +200,17 @@ def build_earnings_layer(
                                 c_base = float(exact_or_post["Close"].iloc[0])
                                 c_post = float(exact_or_post["Close"].iloc[1])
                                 if c_base > 0:
-                                    react_1d = ((c_post - c_base) / c_base) * 100.0
+                                    react_1d = round(((c_post - c_base) / c_base) * 100.0, 2)
                             elif rep.hour.lower() == "bmo" and not pre.empty and not exact_or_post.empty:
                                 c_base = float(pre["Close"].iloc[-1])
                                 c_post = float(exact_or_post["Close"].iloc[0])
                                 if c_base > 0:
-                                    react_1d = ((c_post - c_base) / c_base) * 100.0
-
-                # Fallback reactions for headline movers if bar history slice was narrow
-                if react_1d is None:
-                    known_reactions = {
-                        "MSFT": -1.24, "GOOGL": +2.82, "META": -4.14, "AMZN": +6.19,
-                        "NOW": -33.87, "INTC": -24.38, "RDDT": -36.41, "FTNT": -24.40,
-                        "VRT": +19.65, "CVNA": +18.13, "PNR": +19.82, "GEN": +17.08, "GPN": +16.93,
-                    }
-                    react_1d = known_reactions.get(rep.symbol)
+                                    react_1d = round(((c_post - c_base) / c_base) * 100.0, 2)
+                            elif len(sub) >= 2 and (rep_dt.date() - pd.to_datetime(sub.index[-1]).date()).days <= 5:
+                                c_base = float(sub["Close"].iloc[-2])
+                                c_post = float(sub["Close"].iloc[-1])
+                                if c_base > 0:
+                                    react_1d = round(((c_post - c_base) / c_base) * 100.0, 2)
 
                 reported_items.append(
                     ReportedEarningsItem(
@@ -237,18 +234,53 @@ def build_earnings_layer(
 
         upcoming_items.sort(key=lambda x: (x.date, -x.market_cap))
 
-        # 3. Determine earnings season metrics
+        # 3. Determine earnings season metrics dynamically from reported season data
         # For late October / November, it is Q3 reporting season
         month = as_of_dt.month
         quarter_str = "Q3" if month in (10, 11, 12) else ("Q4" if month in (1, 2, 3) else ("Q1" if month in (4, 5, 6) else "Q2"))
         season_name = f"{quarter_str} {as_of_dt.year} Earnings Season"
 
-        # Benchmark statistics for Q3 2026 earnings season across S&P 500 constituents
-        pct_reported = 68.0 if quarter_str == "Q3" and as_of_dt.year == 2026 else None
-        eps_beat_rate = 78.4 if quarter_str == "Q3" and as_of_dt.year == 2026 else None
-        rev_beat_rate = 64.2 if quarter_str == "Q3" and as_of_dt.year == 2026 else None
-        median_surprise_pct = 4.3 if quarter_str == "Q3" and as_of_dt.year == 2026 else None
-        status_note = "S&P 500 Q3 2026 earnings season progress tracked across 340+ reported constituents." if pct_reported else "Aggregate S&P 500 beat rates: n/a (source unavailable)."
+        season_reported: List[Any] = []
+        if calendar_provider is not None and hasattr(calendar_provider, "get_recent_reported_earnings"):
+            season_start = (as_of_dt - pd.Timedelta(days=45)).strftime("%Y-%m-%d")
+            season_reported = calendar_provider.get_recent_reported_earnings(
+                start_date=season_start,
+                end_date=as_of_date,
+                symbols=None,
+            ) or []
+
+        eps_surprises = [
+            float(r.eps_surprise_pct)
+            for r in season_reported
+            if getattr(r, "eps_surprise_pct", None) is not None
+        ]
+        rev_surprises = [
+            float(r.rev_surprise_pct)
+            for r in season_reported
+            if getattr(r, "rev_surprise_pct", None) is not None
+        ]
+
+        if eps_surprises:
+            eps_beat_rate: Optional[float] = round(100.0 * sum(1 for x in eps_surprises if x > 0) / len(eps_surprises), 1)
+            median_surprise_pct: Optional[float] = round(float(np.median(eps_surprises)), 2)
+            rev_beat_rate: Optional[float] = (
+                round(100.0 * sum(1 for x in rev_surprises if x > 0) / len(rev_surprises), 1)
+                if rev_surprises
+                else None
+            )
+            denom = len(constituents) if len(constituents) >= 20 else max(len(season_reported), 20)
+            pct_reported: Optional[float] = round(min(100.0, 100.0 * len(season_reported) / denom), 1)
+            rev_txt = f" | {rev_beat_rate:.1f}% revenue beat rate" if rev_beat_rate is not None else ""
+            status_note = (
+                f"Tracked large-cap sample ({len(season_reported)} reported in trailing 45d): "
+                f"{eps_beat_rate:.1f}% EPS beat rate, median surprise {median_surprise_pct:+.1f}%{rev_txt}."
+            )
+        else:
+            pct_reported = None
+            eps_beat_rate = None
+            rev_beat_rate = None
+            median_surprise_pct = None
+            status_note = "Aggregate S&P 500 beat rates: n/a (source unavailable)."
 
         data = EarningsLayerData(
             season_name=season_name,

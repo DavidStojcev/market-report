@@ -121,6 +121,7 @@ def test_trailing_reported_earnings_and_next_week_schedule(mock_period, sample_b
         as_of_date=mock_period.session_date,
         cfg=None,
         bars=sample_bars,
+        report_type=mock_period.report_type,
     )
     assert res.status == "available"
     data: EarningsLayerData = res.data

@@ -196,7 +196,7 @@ def test_collapsible_methodology_notes(mock_price_df, sample_config):
 
     assert '<details class="methodology-note"' in html
     assert '<summary>ℹ️ How this score is calculated</summary>' in html
-    assert '<summary>ℹ️ How the Swing-Trade Posture is determined</summary>' in html
+    assert '<summary>ℹ️ How the Market Regime Posture is determined</summary>' in html
     assert '<summary>ℹ️ Volatility Regimes &amp; Risk Thresholds</summary>' in html
 
 

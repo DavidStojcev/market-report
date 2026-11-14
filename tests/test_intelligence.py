@@ -372,7 +372,7 @@ def test_markdown_and_html_forward_looking_integration():
     # 2. Test HTML output
     html_out = render_html(period, [sec1, sec9])
     assert "Macro Regime &amp; Forward Implications: Reflation / Late-Cycle Tension" in html_out
-    assert "Cross-Market Macro Alignment &amp; Execution Posture" in html_out
+    assert "Cross-Market Macro Alignment &amp; Market Regime" in html_out
     assert "326 bps OAS" in html_out
 
 
@@ -534,3 +534,61 @@ def test_html_attribute_validity():
     html_out = render_html(period, [sec1, sec9])
     invalid_class_tags = re.findall(r'class=[\"\'][^\"\']*<[^\"\']*[\"\']', html_out)
     assert len(invalid_class_tags) == 0, f"Found invalid tags inside class attribute: {invalid_class_tags}"
+
+
+def test_multi_horizon_and_cross_strategy_synthesis():
+    """Verify Executive Summary horizon_matrix and Conclusion cross_strategy_lenses render cleanly."""
+    period = PeriodInfo(
+        report_type="weekly",
+        as_of_date="2026-10-30",
+        session_date="2026-10-30",
+        current_start="2026-10-26",
+        current_end="2026-10-30",
+        baseline_date="2026-10-23",
+        prev_period_start="2026-10-19",
+        prev_period_end="2026-10-23",
+        prev_baseline_date="2026-10-16",
+        is_partial=False,
+        session_count=5,
+        notes="",
+    )
+    intel_credit = CreditSpreadIntelligence(3.44, 344.0, 6.0, "Tight / Complacent", "Benign credit")
+    intel_rates = RealRateIntelligence(2.60, -2.0, 2.34, 2.0, 4.94, -6.0, "Restrictive Real Rates", "Valuation cap")
+    intel_vol = VolTermStructureIntelligence(19.42, 20.77, 0.935, -0.01, "Contango (Normal)", "Orderly", "Calm")
+    intel_rot = SectorRotationIntelligence(3.12, 1.38, 3.27, "Broadening Rotation", "XLV, XLB", "XLK, XLC", "Health Care and Materials led", rotation_summary="leadership in Health Care (XLV: +3.12%), Materials (XLB: +2.79%)")
+    intel_regime = MarketRegimeIntelligence(
+        quadrant="Reflation / Late-Cycle Tension",
+        growth_signal="Resilient / Expanding",
+        inflation_signal="Firm / Sticky",
+        summary_badge="Reflation Tension (Weekly Horizon)",
+        forward_outlook="Test outlook narrative.",
+        credit=intel_credit,
+        rates=intel_rates,
+        vol_term=intel_vol,
+        rotation=intel_rot,
+    )
+    sc = Scorecard(
+        raw_score=0.8,
+        max_score=10.0,
+        normalized_score=0.10,
+        verdict="Neutral (Mixed)",
+        votes=[],
+        caution_flags=[],
+        top_bullish_factors=["Breadth holding > 60%"],
+        top_bearish_factors=["Nasdaq-100 below 50-DMA"],
+        summary_reasons=["Conflicted cross-asset signals"],
+    )
+
+    sec1 = build_executive_summary(scorecard=sc, period_info=period, regime_intelligence=intel_regime)
+    sec9 = build_conclusion(scorecard=sc, spx_snap=None, ndx_snap=None, regime_intelligence=intel_regime)
+
+    assert len(sec1.data.horizon_matrix) == 3
+    assert len(sec9.data.cross_strategy_lenses) == 4
+
+    md_out = render_markdown(period, [sec1, sec9])
+    html_out = render_html(period, [sec1, sec9])
+
+    assert "Multi-Horizon & Cross-Strategy Synthesis" in md_out
+    assert "Cross-Strategy Risk & Regime Synthesis" in md_out
+    assert "Multi-Horizon &amp; Cross-Strategy Synthesis" in html_out
+    assert "Cross-Strategy Risk &amp; Regime Synthesis" in html_out

@@ -578,16 +578,32 @@ def evaluate_breadth_category(
         category="breadth",
     ))
 
-    # 3. Net New 52-Week Highs (linear gradient: -20 = -1.0, 0 = 0.0, +20 = +1.0)
+    # 3. Net New 52-Week Highs (1Y percentile gradient when available: 10th=-1.0, 50th=0.0, 90th=+1.0; else raw -20..+20)
     net_nh = float(getattr(breadth_result, "net_new_highs", 0))
-    s_nh = linear_gradient(net_nh, -20.0, 0.0, 20.0)
+    nh_pctile = getattr(breadth_result, "net_new_highs_pctile_1y", None)
+    if nh_pctile is not None:
+        from indicators.breadth import format_percentile_ordinal
+
+        nh_pctile_f = float(nh_pctile)
+        s_nh = linear_gradient(nh_pctile_f, 10.0, 50.0, 90.0)
+        nh_ord = format_percentile_ordinal(nh_pctile_f)
+        nh_cond = f"Net new 52W highs at {int(net_nh):+d} ({nh_ord}, 1Y; gradient score: {s_nh:+.2f})"
+    else:
+        s_nh = linear_gradient(net_nh, -20.0, 0.0, 20.0)
+        nh_cond = f"Net new 52W highs at {int(net_nh):+d} (gradient score: {s_nh:+.2f})"
+    if s_nh > 0.1:
+        nh_interp = "Bullish leadership expansion"
+    elif s_nh < -0.1:
+        nh_interp = "Bearish breadth distribution"
+    else:
+        nh_interp = "Neutral net new highs balance"
     votes.append(IndicatorVote(
         rule_name="Breadth: Net New Highs",
-        condition=f"Net new 52W highs at {int(net_nh):+d} (gradient score: {s_nh:+.2f})",
+        condition=nh_cond,
         vote=s_nh,
         weight=1.0,
         weighted_vote=s_nh,
-        interpretation="Leadership expansion vs distribution gradient",
+        interpretation=nh_interp,
         category="breadth",
     ))
 

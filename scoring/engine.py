@@ -255,7 +255,11 @@ class TrendScoringEngine:
             weighted_score=s_sent * w_sent if st_sent == "active" else 0.0,
             status=st_sent,
             components=votes_sent,
-            notes="Source unavailable (renormalized)" if st_sent != "active" else "",
+            notes=(
+                "Survey/Put-Call feeds unpolled (<2 inputs; CBOE vol surface scored in Volatility category; weight renormalized)"
+                if st_sent != "active"
+                else ""
+            ),
         )
 
         # Enforce min_inputs_per_category (Fix 1.4)
@@ -264,6 +268,11 @@ class TrendScoringEngine:
         for cat in [cat_trend, cat_breadth, cat_vol, cat_rates, cat_sent]:
             valid_inputs = [v for v in cat.components if v.vote is not None]
             if len(valid_inputs) < min_inputs and cat.status == "active":
+                note_msg = (
+                    f"Survey/Put-Call feeds unpolled (<{min_inputs} inputs; CBOE vol surface scored in Volatility category; weight renormalized)"
+                    if cat.category_key == "sentiment_positioning"
+                    else f"Source unavailable (<{min_inputs} valid inputs, renormalized)"
+                )
                 filtered_categories.append(
                     CategoryScore(
                         name=cat.name,
@@ -273,7 +282,7 @@ class TrendScoringEngine:
                         weighted_score=0.0,
                         status="unavailable",
                         components=cat.components,
-                        notes=f"Source unavailable (<{min_inputs} valid inputs, renormalized)",
+                        notes=note_msg,
                         effective_weight=0.0,
                     )
                 )

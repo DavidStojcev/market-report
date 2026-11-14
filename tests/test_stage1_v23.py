@@ -101,7 +101,8 @@ def test_1_4_sentiment_min_inputs_and_footer():
     with open(res["html"], "r", encoding="utf-8") as f:
         html_content = f.read()
     assert "not scored" in html_content or "displayed only" in html_content
-    assert "Nasdaq Composite native volume (n/a - source unavailable)" in html_content
+    assert "ONEQ" in html_content
+    assert "Sentiment category excluded from composite score when &lt;2 valid inputs" in html_content or "Sentiment category excluded from composite score" in html_content
 
 
 def test_1_5_oil_3m_single_source_of_truth():

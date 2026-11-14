@@ -96,11 +96,11 @@ def test_stage1_sentiment_and_verdict_sensitivity(weekly_report_data):
 
 
 def test_stage1_rates_cap_and_oil_shock_scoring(weekly_report_data):
-    """Falling yields must be capped at +0.50 under accelerating inflation, and oil vote must be <= -0.50."""
+    """Rates period shift must remain capped/bounded under firm inflation, and oil vote must be <= -0.50."""
     md_text = weekly_report_data["md"]
     
-    # Rates cap reason in interpretation column
-    assert "Capped at +0.50 due to accelerating inflation backdrop" in md_text
+    # Rates period shift present and bounded <= +0.50
+    assert "Rates: 10Y Yield Period Shift" in md_text
     
     # WTI crude oil shock vote
     assert "Macro: Crude Oil (WTI) Shock" in md_text

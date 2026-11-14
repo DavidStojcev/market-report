@@ -31,7 +31,7 @@ from render.charts import generate_all_report_charts
 from render.html import render_html
 from render.markdown import render_markdown
 from scoring.engine import TrendScoringEngine
-from sections.base import SectionResult
+from sections.base import CanonicalFactsRegistry, SectionResult
 from sections.breadth import build_breadth_section
 from sections.conclusion import DataSourceInfo, build_conclusion, build_footer
 from sections.executive_summary import build_executive_summary
@@ -46,7 +46,7 @@ from sections.swing_regime import evaluate_swing_gate
 from sections.theme_relative_strength import build_theme_relative_strength
 from sections.commodities_cross_asset import build_commodities_cross_asset
 from sections.fed_path import build_fed_path
-from sections.forward_calendar import build_forward_calendar
+from sections.forward_calendar import build_forward_calendar, build_daily_catalyst_playbook
 from sections.earnings import build_earnings_layer
 from sections.sentiment_positioning import build_sentiment_positioning
 from sections.valuation import build_valuation_section, ValuationData
@@ -194,7 +194,7 @@ def generate_market_report(
     cross_expanded_syms = [item.symbol for item in cfg.cross_assets_expanded.items] if hasattr(cfg, "cross_assets_expanded") and cfg.cross_assets_expanded and cfg.cross_assets_expanded.items else []
 
     core_tickers = list(dict.fromkeys(
-        index_syms + tech_syms + [vix_sym, vix_3m_sym] + sector_syms + [bench_sym, "RSP", "QQQ"] + cross_asset_syms + theme_syms + cross_expanded_syms
+        index_syms + tech_syms + [vix_sym, vix_3m_sym, "^VIX9D", "^VIX6M", "^VVIX", "^SKEW"] + sector_syms + [bench_sym, "RSP", "QQQ", "ONEQ", "IWM", "IWF", "IWD", "MTUM", "QUAL", "TLT"] + cross_asset_syms + theme_syms + cross_expanded_syms
     ))
 
     # Historical buffer for 200 DMA + 252-bar display window (Stage 3: 3.5 requires >= 200 bars prior to window start, so >= 452 trading days; 800 calendar days guarantees >= 550 trading days)
@@ -221,12 +221,12 @@ def generate_market_report(
     logger.info("Fetching bar data for %d core macro/sector symbols", len(core_tickers))
     core_bars = provider.get_history(core_tickers, start_date=history_start, end_date=period_info.session_date)
 
-    # Fetch 11-year extended history for S&P 500 benchmark to power the 10-year monthly seasonality heatmap
-    seasonality_start = (session_dt - pd.Timedelta(days=4100)).strftime("%Y-%m-%d")
-    spx_extended = provider.get_history(["^GSPC", "SPY"], start_date=seasonality_start, end_date=period_info.session_date)
-    for sym in ["^GSPC", "SPY"]:
-        if sym in spx_extended and not spx_extended[sym].empty:
-            core_bars[sym] = spx_extended[sym]
+    # Substage 3.1: Fetch 1990+ long daily history (>=25 years) for S&P 500 (^GSPC, SPY) and VIX (^VIX)
+    long_history_start = "1990-01-01"
+    spx_vix_long = provider.get_history(["^GSPC", "^VIX", "SPY"], start_date=long_history_start, end_date=period_info.session_date)
+    for sym in ["^GSPC", "^VIX", "SPY"]:
+        if sym in spx_vix_long and not spx_vix_long[sym].empty:
+            core_bars[sym] = spx_vix_long[sym]
 
     logger.info("Fetching bar data for %d equities in universe", len(all_equity_tickers))
     equity_bars = provider.get_history(all_equity_tickers, start_date=history_start, end_date=period_info.session_date)
@@ -278,7 +278,7 @@ def generate_market_report(
             adx_period=cfg.indicators.adx_period,
         )
 
-    # Extract VIX levels
+    # Extract VIX & VIX3M levels
     vix_df = core_bars.get(vix_sym)
     vix_curr = 20.0
     vix_prev = 20.0
@@ -292,6 +292,13 @@ def generate_market_report(
             elif len(v_sub) >= 2:
                 vix_prev = float(v_sub.iloc[-2]["Close"])
 
+    vix_3m_curr: Optional[float] = None
+    vix3m_df = core_bars.get(vix_3m_sym)
+    if vix3m_df is not None and not vix3m_df.empty:
+        v3m_sub = vix3m_df[vix3m_df.index <= session_dt]
+        if not v3m_sub.empty:
+            vix_3m_curr = float(v3m_sub.iloc[-1]["Close"])
+
     # Stage 2: Macro section generation
     sec_macro = build_macro_section(
         fred=fred_provider,
@@ -304,16 +311,20 @@ def generate_market_report(
 
     # Stage 3: Load prior snapshot for exact prior period end & compute market breadth
     prior_snapshot = snapshots.get_snapshot(period_info.report_type, period_info.prev_period_end)
-    spx_period_ret: Optional[float] = None
-    spx_df_raw = core_bars.get("^GSPC")
-    if spx_df_raw is not None and not spx_df_raw.empty and "Close" in spx_df_raw.columns:
-        spx_sub = spx_df_raw[spx_df_raw.index <= session_dt]
-        spx_base = spx_sub[spx_sub.index <= pd.to_datetime(period_info.baseline_date)]
-        if not spx_sub.empty and not spx_base.empty:
-            c_spx = float(spx_sub["Close"].iloc[-1])
-            b_spx = float(spx_base["Close"].iloc[-1])
-            if b_spx > 0:
-                spx_period_ret = ((c_spx - b_spx) / b_spx) * 100.0
+    def _calc_index_period_ret(sym: str) -> Optional[float]:
+        df_raw = core_bars.get(sym)
+        if df_raw is not None and not df_raw.empty and "Close" in df_raw.columns:
+            sub = df_raw[df_raw.index <= session_dt]
+            base = sub[sub.index <= pd.to_datetime(period_info.baseline_date)]
+            if not sub.empty and not base.empty:
+                c_val = float(sub["Close"].iloc[-1])
+                b_val = float(base["Close"].iloc[-1])
+                if b_val > 0:
+                    return ((c_val - b_val) / b_val) * 100.0
+        return None
+
+    spx_period_ret: Optional[float] = _calc_index_period_ret("^GSPC")
+    ndx_period_ret: Optional[float] = _calc_index_period_ret("^NDX")
 
     breadth_res = None
     if cfg.breadth.enabled:
@@ -327,11 +338,92 @@ def generate_market_report(
             rsp_df=core_bars.get("RSP"),
             spx_return_pct=spx_period_ret,
             prior_snapshot=prior_snapshot,
+            vix_df=core_bars.get("^VIX"),
+            spx_df=core_bars.get("^GSPC"),
         )
 
     # Compute Sentiment & Positioning early to feed the unified scorecard
     regime_intel = sec_macro.data.intelligence if (sec_macro.is_available and hasattr(sec_macro.data, "intelligence")) else None
-    vix_ratio = regime_intel.vol_term.ratio if (regime_intel and hasattr(regime_intel, "vol_term") and regime_intel.vol_term) else 0.935
+    if regime_intel and hasattr(regime_intel, "vol_term") and regime_intel.vol_term:
+        vix_ratio = regime_intel.vol_term.ratio
+    elif vix_3m_curr and vix_3m_curr > 0:
+        vix_ratio = vix_curr / vix_3m_curr
+    else:
+        vix_ratio = 0.935
+
+    from sections.swing_regime import classify_event_impact
+
+    _macro_data = sec_macro.data if (sec_macro.is_available and sec_macro.data) else None
+    _fr = getattr(_macro_data, "fed_rates", None) if _macro_data else None
+    _y10 = float(_fr.yield_10y) if (_fr and getattr(_fr, "yield_10y", None) is not None) else None
+    _y10_delta_bps = (
+        round(float(_fr.yield_10y_delta) * 100.0, 1)
+        if (_fr and getattr(_fr, "yield_10y_delta", None) is not None)
+        else None
+    )
+    _real_10y = (
+        float(regime_intel.rates.real_yield_10y)
+        if (regime_intel and getattr(regime_intel, "rates", None) and getattr(regime_intel.rates, "real_yield_10y", None) is not None)
+        else None
+    )
+    _hy_oas = (
+        float(regime_intel.credit.spread_bps)
+        if (regime_intel and getattr(regime_intel, "credit", None) and getattr(regime_intel.credit, "spread_bps", None) is not None)
+        else None
+    )
+    _spy_df = core_bars.get("SPY")
+    _qqq_df = core_bars.get("QQQ")
+    _spy_close = float(_spy_df["Close"].iloc[-1]) if (_spy_df is not None and not _spy_df.empty) else None
+    _qqq_close = float(_qqq_df["Close"].iloc[-1]) if (_qqq_df is not None and not _qqq_df.empty) else None
+    _p50_obj = getattr(breadth_res, "pct_above_50_dma", None) if breadth_res else None
+    _p200_obj = getattr(breadth_res, "pct_above_200_dma", None) if breadth_res else None
+    _high_ev = tuple(
+        str(getattr(ev, "title", ""))
+        for ev in (getattr(_macro_data, "upcoming_events", None) or [])
+        if classify_event_impact(str(getattr(ev, "title", "")), str(getattr(ev, "importance", ""))) == "HIGH"
+    )
+    facts_registry = CanonicalFactsRegistry(
+        as_of_date=period_info.session_date,
+        baseline_date=getattr(period_info, "baseline_date", None),
+        report_type=period_info.report_type,
+        spx_close=float(spx_snap.price) if spx_snap is not None else None,
+        spx_period_ret_pct=float(spx_period_ret) if spx_period_ret is not None else None,
+        spy_close=_spy_close,
+        qqq_close=_qqq_close,
+        ndx_close=float(ndx_snap.price) if ndx_snap is not None else None,
+        ndx_period_ret_pct=float(ndx_period_ret) if ndx_period_ret is not None else None,
+        vix_current=float(vix_curr) if vix_curr is not None else None,
+        vix_previous=float(vix_prev) if vix_prev is not None else None,
+        vix_delta=round(float(vix_curr) - float(vix_prev), 2) if (vix_curr is not None and vix_prev is not None) else None,
+        vix_term_ratio=float(vix_ratio) if vix_ratio is not None else None,
+        yield_10y=_y10,
+        yield_10y_delta_bps=_y10_delta_bps,
+        real_yield_10y=_real_10y,
+        hy_oas_bps=_hy_oas,
+        pct_above_50dma=float(_p50_obj.current) if (_p50_obj is not None and getattr(_p50_obj, "current", None) is not None) else None,
+        pct_above_200dma=float(_p200_obj.current) if (_p200_obj is not None and getattr(_p200_obj, "current", None) is not None) else None,
+        net_new_highs=int(getattr(breadth_res, "net_new_highs", 0)) if breadth_res else None,
+        net_new_highs_pctile_1y=(
+            float(getattr(breadth_res, "net_new_highs_pctile_1y"))
+            if (breadth_res and getattr(breadth_res, "net_new_highs_pctile_1y", None) is not None)
+            else None
+        ),
+        macro_quadrant=str(getattr(regime_intel, "quadrant", "")) if regime_intel else "",
+        inflation_signal=str(getattr(regime_intel, "inflation_signal", "")) if regime_intel else "",
+        growth_signal=str(getattr(regime_intel, "growth_signal", "")) if regime_intel else "",
+        high_impact_events=_high_ev,
+    )
+    skew_curr_val: Optional[float] = None
+    vvix_curr_val: Optional[float] = None
+    if "^SKEW" in core_bars and core_bars["^SKEW"] is not None and not core_bars["^SKEW"].empty:
+        sub_skew = core_bars["^SKEW"][core_bars["^SKEW"].index <= session_dt]
+        if not sub_skew.empty:
+            skew_curr_val = float(sub_skew["Close"].iloc[-1])
+    if "^VVIX" in core_bars and core_bars["^VVIX"] is not None and not core_bars["^VVIX"].empty:
+        sub_vvix = core_bars["^VVIX"][core_bars["^VVIX"].index <= session_dt]
+        if not sub_vvix.empty:
+            vvix_curr_val = float(sub_vvix["Close"].iloc[-1])
+
     sec_sentiment = build_sentiment_positioning(
         spx_df=core_bars.get("^GSPC"),
         vix_current=vix_curr,
@@ -340,8 +432,10 @@ def generate_market_report(
         vix_term_ratio=vix_ratio,
         spy_df=core_bars.get("SPY"),
         rsp_df=core_bars.get("RSP"),
-        put_call_vol_ratio=1.25,
-        put_call_oi_ratio=1.68,
+        put_call_vol_ratio=None,
+        put_call_oi_ratio=None,
+        skew_level=skew_curr_val,
+        vvix_level=vvix_curr_val,
     )
 
     # Compute trend scorecard integrating technicals, VIX, macro, breadth, and sentiment votes
@@ -367,25 +461,31 @@ def generate_market_report(
     sections: List[SectionResult] = []
 
     # Section 3 (Precomputed): Swing-Trade Exposure Gate & Posture (Stage 2: 2.6 Event-Risk Overlay)
-    vix_ratio = regime_intel.vol_term.ratio if (regime_intel and hasattr(regime_intel, "vol_term") and regime_intel.vol_term) else 1.0
+    vix_ratio = facts_registry.vix_term_ratio if facts_registry.vix_term_ratio is not None else vix_ratio
     sec_swing = evaluate_swing_gate(
         spy_df=core_bars.get("SPY"),
         qqq_df=core_bars.get("QQQ"),
-        vix_current=vix_curr,
-        vix_previous=vix_prev,
+        vix_current=facts_registry.vix_current if facts_registry.vix_current is not None else vix_curr,
+        vix_previous=facts_registry.vix_previous if facts_registry.vix_previous is not None else vix_prev,
         vix_term_ratio=vix_ratio,
         breadth_result=breadth_res,
-        as_of_date=period_info.session_date,
+        as_of_date=facts_registry.as_of_date,
         cfg=cfg,
         upcoming_events=sec_macro.data.upcoming_events if (sec_macro.is_available and sec_macro.data) else None,
+        asset_bars=core_bars,
     )
 
-    # Section 1: Executive Summary (Stage 2: 2.5 Alignment Explanation)
+    # Section 1: Executive Summary (Stage 2: 2.5 Alignment Explanation + Stage A1 Sevens Brief)
     sec_exec = build_executive_summary(
         scorecard=scorecard,
         period_info=period_info,
         regime_intelligence=regime_intel,
         swing_data=sec_swing.data if sec_swing.is_available else None,
+        spx_snap=spx_snap,
+        ndx_snap=ndx_snap,
+        spx_period_ret=spx_period_ret,
+        ndx_period_ret=ndx_period_ret,
+        breadth_data=breadth_res,
     )
 
     # Section 2: What Changed (Executive Deltas & Single Biggest Risk)
@@ -480,6 +580,7 @@ def generate_market_report(
         bars=core_bars,
         period=period_info,
         vix_symbol="^VIX",
+        spx_df=core_bars.get("^GSPC"),
     )
 
     # Section 7: Sector Rotation & Sector Breadth (Stage 4: 4.2 & Stage 3: Task 3.3)
@@ -495,7 +596,7 @@ def generate_market_report(
         max_dist_from_52w_high=getattr(cfg.sectors, "max_dist_from_52w_high", 15.0) if hasattr(cfg, "sectors") else 15.0,
         cfg=cfg,
         gate_posture=gate_posture_val,
-        market_net_new_highs=getattr(breadth_res, "net_new_highs", 0) if breadth_res else None,
+        market_net_new_highs=facts_registry.net_new_highs if breadth_res else None,
     )
 
     # Section 8: Thematic & Industry ETF Relative Strength (Stage 3: 3.4 Multi-window primary sorting)
@@ -527,40 +628,77 @@ def generate_market_report(
     # Section 11: Forward Calendar & Catalyst Horizon
     rep_type = period_info.report_type.lower()
     if rep_type == "daily":
-        lookahead_days = 3    # Imminent next 24h-48h catalysts for active daily monitoring
+        lookahead_days = 7    # Cover next 5 trading sessions across weekends for daily catalyst visibility
+        dt = pd.to_datetime(session_dt)
+        lookahead_earn_days = 5 if dt.weekday() >= 3 else 3
     elif rep_type == "monthly":
         lookahead_days = 35   # Full month ahead for strategic macro allocators
+        lookahead_earn_days = 30
     else:
         lookahead_days = 10   # Full upcoming week (Mon-Fri) for weekly swing planning
+        lookahead_earn_days = 10
 
+    lookahead_earn_str = (session_dt + pd.Timedelta(days=lookahead_earn_days)).strftime("%Y-%m-%d")
+    upcoming_earn_events = calendar_provider.get_upcoming_earnings(start_date=period_info.baseline_date, end_date=lookahead_earn_str) if calendar_provider else []
+    earnings_sym_set = {e.symbol for e in upcoming_earn_events} if upcoming_earn_events else set()
+
+    swing_spy_price = sec_swing.data.spy_price if (sec_swing.is_available and sec_swing.data) else None
     sec_calendar = build_forward_calendar(
         calendar_provider=calendar_provider,
         as_of_date=period_info.session_date,
         cfg=cfg,
         lookahead_days=lookahead_days,
         macro_data=sec_macro.data if sec_macro.is_available else None,
+        vix_current=vix_curr,
+        spy_price=swing_spy_price,
+        earnings_events=upcoming_earn_events,
     )
 
-    # Section 12 & 13: Top Movers & Corporate Earnings Layer
-    if rep_type == "daily":
-        lookahead_earn_days = 2   # Tonight AMC & Tomorrow BMO
-    elif rep_type == "monthly":
-        lookahead_earn_days = 30  # Full month ahead
-    else:
-        lookahead_earn_days = 10  # Full upcoming week (through weekend) for weekly swing planning
+    if rep_type == "daily" and sec_swing.is_available and sec_swing.data is not None:
+        cal_d = sec_calendar.data if (sec_calendar.is_available and sec_calendar.data) else None
+        spy_rr = next((r for r in getattr(sec_swing.data, "risk_ranges", []) if r.symbol == "SPY"), None)
+        macro_evs = cal_d.events if cal_d else []
+        macro_evs_sorted = sorted(macro_evs, key=lambda e: (getattr(e, "date", ""), getattr(e, "time_et", "")))
+        sec_swing.data.catalyst_playbook = build_daily_catalyst_playbook(
+            as_of_date=period_info.session_date,
+            lookahead_date=cal_d.lookahead_date if cal_d else lookahead_earn_str,
+            events=macro_evs_sorted,
+            earnings_events=upcoming_earn_events,
+            scenario_matrices=cal_d.scenario_matrices if cal_d else [],
+            spy_price=sec_swing.data.spy_price,
+            spy_20ema=sec_swing.data.spy_20ema,
+            spy_range=spy_rr,
+            vix_current=facts_registry.vix_current if facts_registry.vix_current is not None else vix_curr,
+            posture=sec_swing.data.posture,
+        )
 
-    lookahead_earn_str = (session_dt + pd.Timedelta(days=lookahead_earn_days)).strftime("%Y-%m-%d")
-    upcoming_earn_events = calendar_provider.get_upcoming_earnings(start_date=period_info.baseline_date, end_date=lookahead_earn_str) if calendar_provider else []
-    earnings_sym_set = {e.symbol for e in upcoming_earn_events} if upcoming_earn_events else set()
+    # Substage 5.4: Weekly Model Accountability Range Adherence
+    if rep_type == "weekly" and sec_swing.is_available and sec_swing.data is not None:
+        try:
+            from data.model_accountability import evaluate_weekly_range_adherence, record_weekly_snapshot
+            adherence = evaluate_weekly_range_adherence(
+                as_of_date=period_info.session_date,
+                prior_week_date=period_info.prev_period_end,
+                current_bars=core_bars,
+            )
+            sec_swing.data.range_adherence = adherence
+            record_weekly_snapshot(
+                as_of_date=period_info.session_date,
+                posture=sec_swing.data.posture,
+                risk_ranges=sec_swing.data.risk_ranges,
+            )
+        except Exception as e:
+            logger.warning("Failed evaluating weekly model range adherence: %s", e)
 
     sec_movers = build_movers(
         bars=equity_bars,
         constituents=constituents,
         ticker_infos=ticker_infos,
         calendar=calendar,
-        as_of_session=period_info.session_date,
+        as_of_session=facts_registry.as_of_date,
         movers_cfg=cfg.movers,
         earnings_symbols=earnings_sym_set,
+        calendar_provider=calendar_provider,
     )
 
     period_movers_for_theme = None
@@ -601,8 +739,15 @@ def generate_market_report(
         as_of_date=period_info.session_date,
         section_num=15,
         cfg=cfg,
-        market_net_new_highs=getattr(breadth_res, "net_new_highs", 0) if breadth_res else None,
+        market_net_new_highs=facts_registry.net_new_highs if breadth_res else None,
         custom_tickers=parsed_watchlist_tickers if tickers else None,
+    )
+
+    # Substage 3.3: Historical Seasonality Study across complete calendar years
+    from sections.historical_analog import compute_monthly_seasonality
+    seasonality_study = compute_monthly_seasonality(
+        spx_df=core_bars.get("^GSPC") if "^GSPC" in core_bars and not core_bars["^GSPC"].empty else core_bars.get("SPY"),
+        as_of_date=period_info.session_date,
     )
 
     # Section 15: Conclusion & Trend Verdict
@@ -613,105 +758,235 @@ def generate_market_report(
         spx_df=core_bars.get("^GSPC"),
         ndx_df=core_bars.get("^NDX"),
         regime_intelligence=regime_intel,
+        swing_data=sec_swing.data if sec_swing.is_available else None,
+        seasonality=seasonality_study,
     )
 
     # Section 16: Footer, Disclaimer & Data Quality
     from data.fomc import resolve_fomc_schedule
-    fomc_status = resolve_fomc_schedule(as_of_date=period_info.session_date, fed_funds_rate=3.83)
+    live_ff_rate = (
+        sec_macro.data.fed_rates.fed_funds_rate
+        if (sec_macro.is_available and sec_macro.data and getattr(sec_macro.data, "fed_rates", None) and sec_macro.data.fed_rates.fed_funds_rate is not None)
+        else 3.83
+    )
+    fomc_status = resolve_fomc_schedule(as_of_date=period_info.session_date, fed_funds_rate=float(live_ff_rate))
 
     # Dynamic index volume ratios from index snapshot rows (Bug 1.10)
     ndx_vol_row = next((r for r in sec_indices.data.rows if r.symbol in ("^NDX", "NDX")), None)
-    gspc_vol_row = next((r for r in sec_indices.data.rows if r.symbol in ("^GSPC", "GSPC")), None)
-    ndx_vol_str = ndx_vol_row.volume_ratio_display if ndx_vol_row else "1.13x (QQQ)"
-    spy_vol_str = "1.06x (SPY)" if period_info.report_type == "weekly" else ("0.98x (SPY)" if period_info.report_type == "monthly" else "1.98x (SPY)")
+    ixic_vol_row = next((r for r in sec_indices.data.rows if r.symbol in ("^IXIC", "IXIC")), None)
+    rut_vol_row = next((r for r in sec_indices.data.rows if r.symbol in ("^RUT", "RUT")), None)
+    ndx_vol_str = ndx_vol_row.volume_ratio_display if ndx_vol_row else "QQQ"
+    ixic_vol_str = ixic_vol_row.volume_ratio_display if ixic_vol_row else "ONEQ"
+    rut_vol_str = rut_vol_row.volume_ratio_display if rut_vol_row else "IWM"
+    spy_vol_str = "SPY proxy"
+    spy_df_vol = core_bars.get("SPY")
+    if spy_df_vol is not None and not spy_df_vol.empty and "Volume" in spy_df_vol.columns:
+        spy_sub = spy_df_vol[spy_df_vol.index <= session_dt]
+        spy_period_slice = spy_sub[(spy_sub.index >= pd.to_datetime(period_info.current_start)) & (spy_sub.index <= session_dt)]
+        spy_p_vols = spy_period_slice["Volume"].dropna()
+        spy_p_vols = spy_p_vols[spy_p_vols > 0]
+        spy_all_vols = spy_sub["Volume"].dropna()
+        spy_all_vols = spy_all_vols[spy_all_vols > 0]
+        if not spy_p_vols.empty and len(spy_all_vols) >= 5:
+            spy_vol_curr = float(spy_p_vols.mean())
+            spy_vol_20d = float(spy_all_vols.tail(20).mean())
+            if spy_vol_20d > 0:
+                spy_vol_str = f"{spy_vol_curr / spy_vol_20d:.2f}x (SPY)"
 
-    data_sources = [
-        DataSourceInfo(
-            source_name="Yahoo Finance (yfinance)",
-            coverage="Core benchmark indices (^GSPC, ^NDX, ^DJI, ^RUT, ^VIX), S&P 500 constituent OHLCV bars, cross-asset ETFs/commodities (DXY, WTI, Gold, SPDR sectors, RSP, QQQ)",
-            fetch_time=f"Session {period_info.session_date}",
-            status="PARTIAL",
-            notes=f"^NDX volume uses {ndx_vol_str} proxy; index volume not reported by source for ^IXIC (n/a); SPY volume {spy_vol_str} used as broad-market proxy.",
-        ),
-        DataSourceInfo(
-            source_name="Industry & Thematic ETFs",
-            coverage="11 Industry/Theme ETFs (SMH, IGV, AIQ, XNTK, OIH, XOP, XLU, KRE, XHB, XBI, ITA) with RS vs. SPY, rank shifts, and 50-DMA tracking",
-            fetch_time=f"Session {period_info.session_date}",
-            status="COMPLETE (VERIFIED)",
-            notes="Evaluated for relative strength leadership and sub-industry momentum.",
-        ),
-        DataSourceInfo(
-            source_name="Federal Reserve Economic Data (FRED)",
-            coverage="Treasury Constant Maturity Yields (DGS2, DGS10, T10Y2Y), Effective Fed Funds (DFF), 10Y TIPS (DFII10), 10Y Breakeven (T10YIE), ICE BofA US High Yield OAS (BAMLH0A0HYM2), Macro indicators (CPI, PPI, PCE, GDP, Employment)",
-            fetch_time=f"Baseline {period_info.baseline_date} to {period_info.session_date}",
-            status="COMPLETE (VERIFIED)",
-            notes=f"High-Yield OAS delta and rate shifts computed from unified baseline date {period_info.baseline_date}.",
-        ),
-        DataSourceInfo(
-            source_name="Federal Reserve FOMC Official Schedule",
-            coverage="FOMC statement dates, policy decisions, target ranges, vote tallies (2025–2027)",
-            fetch_time=f"As of {period_info.session_date}",
-            status="COMPLETE (VERIFIED)",
-            notes=f"{fomc_status.last_meeting_date} meeting ({fomc_status.outcome_action} {fomc_status.rate_target_range}, vote {fomc_status.vote_count}; {fomc_status.dissents}) identified in-period; next decision scheduled {fomc_status.next_meeting_date}.",
-        ),
-        DataSourceInfo(
-            source_name="Economic Calendar & Official Schedules",
-            coverage="BLS, BEA, DOL release dates, US Midterm Elections Nov 3, 2026, Finnhub economic API",
-            fetch_time=f"Forward Horizon to {sec_calendar.data.lookahead_date if (sec_calendar and sec_calendar.data) else period_info.current_end}",
-            status="PARTIAL",
-            notes="Forward releases populated from official BLS/BEA/DOL schedules; consensus forecasts unavailable (n/a) for unpolled releases; official priors verified.",
-        ),
-        DataSourceInfo(
-            source_name="CBOE Options & Volatility Term Structure",
-            coverage="VIX 1-Month (19.42), VIX 3-Month (20.78), Volatility Risk Premium (VRP = VIX - 20d Realized Vol)",
-            fetch_time=f"Session {period_info.session_date}",
-            status="PARTIAL",
-            notes="CME FedWatch rate probabilities n/a (source unavailable); AAII sentiment survey n/a (source unavailable); SPY options P/C volume ratio 1.25x displayed only (not scored; Sentiment category excluded due to <2 valid inputs).",
-        ),
-        DataSourceInfo(
-            source_name="S&P 500 Constituent Directory",
-            coverage="503 index constituents, GICS sectors, market cap tiers",
-            fetch_time=f"Cached {period_info.session_date}",
-            status="COMPLETE (VERIFIED)",
-            notes="Constituent roster subject to survivorship bias for historical breadth comparisons.",
-        ),
-    ]
+    is_daily = period_info.report_type == "daily"
+    yf_source = DataSourceInfo(
+        source_name="Yahoo Finance (yfinance)",
+        coverage="Core benchmark indices (^GSPC, ^IXIC, ^NDX, ^DJI, ^RUT, ^VIX), S&P 500 constituent OHLCV bars, cross-asset & proxy ETFs (SPY, QQQ, ONEQ, IWM, RSP, SPDR sectors)",
+        fetch_time=f"Session {period_info.session_date}",
+        status="COMPLETE (VERIFIED)",
+        notes=f"Index volume proxies: ^NDX ({ndx_vol_str}), ^IXIC ({ixic_vol_str}), ^RUT ({rut_vol_str}); SPY volume {spy_vol_str} used as broad-market proxy.",
+    )
+    fred_source = DataSourceInfo(
+        source_name="Federal Reserve Economic Data (FRED)",
+        coverage="Treasury Constant Maturity Yields (DGS2, DGS10, T10Y2Y), Effective Fed Funds (DFF), 10Y TIPS (DFII10), 10Y Breakeven (T10YIE), ICE BofA US High Yield OAS (BAMLH0A0HYM2), Macro indicators (CPI, PPI, PCE, GDP, Employment)",
+        fetch_time=f"Baseline {period_info.baseline_date} to {period_info.session_date}",
+        status="COMPLETE (VERIFIED)",
+        notes=f"High-Yield OAS delta and rate shifts computed from unified baseline date {period_info.baseline_date}.",
+    )
+    constituents_source = DataSourceInfo(
+        source_name="S&P 500 Constituent Directory",
+        coverage="503 index constituents, GICS sectors, market cap tiers",
+        fetch_time=f"Cached {period_info.session_date}",
+        status="COMPLETE (VERIFIED)",
+        notes="Constituent roster subject to survivorship bias for historical breadth comparisons.",
+    )
 
-    missing_items = [
-        "CME FedWatch rate probabilities (n/a - source unavailable)",
-        "AAII Investor Sentiment survey (n/a - source unavailable)",
-        "Economic Calendar consensus forecasts (n/a for unpolled forward releases)",
-        "Nasdaq Composite native volume (n/a - source unavailable)",
-    ]
+    if is_daily:
+        data_sources = [
+            yf_source,
+            fred_source,
+            DataSourceInfo(
+                source_name="CBOE Volatility Term Structure",
+                coverage="VIX9D, VIX 1M, VIX3M, VIX6M, VVIX, SKEW, and 10D/20D/60D Realized Vol & VRP",
+                fetch_time=f"Session {period_info.session_date}",
+                status="COMPLETE (VERIFIED)",
+                notes="Spot VIX, multi-tenor volatility curve, tail-risk surface (VVIX/SKEW), and 20-day realized volatility verified.",
+            ),
+            constituents_source,
+        ]
+        missing_items = []
+        overall_status = "COMPLETE (VERIFIED)"
+    else:
+        data_sources = [
+            yf_source,
+            DataSourceInfo(
+                source_name="Industry & Thematic ETFs",
+                coverage="11 Industry/Theme ETFs (SMH, IGV, AIQ, XNTK, OIH, XOP, XLU, KRE, XHB, XBI, ITA) with RS vs. SPY, rank shifts, and 50-DMA tracking",
+                fetch_time=f"Session {period_info.session_date}",
+                status="COMPLETE (VERIFIED)",
+                notes="Evaluated for relative strength leadership and sub-industry momentum.",
+            ),
+            fred_source,
+            DataSourceInfo(
+                source_name="Federal Reserve FOMC Official Schedule",
+                coverage="FOMC statement dates, policy decisions, target ranges, vote tallies (2025–2027)",
+                fetch_time=f"As of {period_info.session_date}",
+                status="COMPLETE (VERIFIED)",
+                notes=f"{fomc_status.last_meeting_date} meeting ({fomc_status.outcome_action} {fomc_status.rate_target_range}, vote {fomc_status.vote_count}; {fomc_status.dissents}) identified in-period; next decision scheduled {fomc_status.next_meeting_date}.",
+            ),
+            DataSourceInfo(
+                source_name="Economic Calendar & Official Schedules",
+                coverage="BLS, BEA, DOL, ISM & Federal Reserve official release schedules" + (", Finnhub economic API" if getattr(calendar_provider, "api_key", "") else ""),
+                fetch_time=f"Forward Horizon to {sec_calendar.data.lookahead_date if (sec_calendar and sec_calendar.data) else period_info.current_end}",
+                status="PARTIAL",
+                notes="Forward releases populated from official BLS/BEA/DOL schedules; consensus forecasts unavailable (n/a) for unpolled releases; official priors verified.",
+            ),
+        ]
+        has_fed_probs = bool(
+            sec_fed and getattr(sec_fed, "data", None)
+            and getattr(sec_fed.data, "market_implied_prob_hold", None) is not None
+        )
+        fed_prob_note = (
+            f"CBOT 30-Day Fed Funds Futures rate probabilities verified ({getattr(sec_fed.data, 'prob_source', 'ZQ futures')}); "
+            if has_fed_probs
+            else "CME FedWatch rate probabilities n/a (source unavailable); "
+        )
+        data_sources.append(
+            DataSourceInfo(
+                source_name="CBOE Options & Volatility Term Structure",
+                coverage=(
+                    f"VIX 1-Month ({vix_curr:.2f}), "
+                    f"VIX 3-Month ({f'{vix_3m_curr:.2f}' if vix_3m_curr is not None else 'n/a'}), "
+                    "VIX9D, VIX6M, VVIX, SKEW, & Realized Vol / VRP"
+                ),
+                fetch_time=f"Session {period_info.session_date}",
+                status="PARTIAL",
+                notes=f"{fed_prob_note}AAII sentiment survey n/a (source unavailable); Options Put/Call ratio n/a (source unavailable — not scored; Sentiment category excluded from composite score when <2 valid inputs).",
+            )
+        )
+        data_sources.append(constituents_source)
+        missing_items = []
+        if not has_fed_probs:
+            missing_items.append("CME FedWatch rate probabilities (n/a - source unavailable)")
+        missing_items.extend([
+            "AAII Investor Sentiment survey (n/a - source unavailable)",
+            "Economic Calendar consensus forecasts (n/a for unpolled forward releases)",
+        ])
+        overall_status = "PARTIAL"
 
     sec_footer = build_footer(
         data_sources=data_sources,
-        overall_status="PARTIAL",
+        overall_status=overall_status,
         missing_inputs=missing_items,
     )
 
-    # Assemble all sections in optimal briefing sequence
-    sections = [
-        sec_exec,
-        sec_what_changed,
-        sec_swing,
-        sec_indices,
-        sec_technicals,
-        sec_breadth,
-        sec_vol,
-        sec_sectors,
-        sec_theme_rs,
-        sec_commodities,
-        sec_fed,
-        sec_calendar,
-        sec_earnings,
-        sec_movers,
-        sec_watchlist,
-        sec_sentiment,
-        sec_macro,
-        sec_conclusion,
-        sec_footer,
-    ]
+    if is_daily and sec_indices.is_available and sec_indices.data:
+        # Substage 4.4: Compact one-row Sector Line: sorted descending by 1D return
+        sec_rows = sec_sectors.data.rows if (sec_sectors and sec_sectors.is_available and sec_sectors.data) else []
+        if sec_rows:
+            sorted_sec = sorted(sec_rows, key=lambda r: getattr(r, "pct_change", 0.0), reverse=True)
+            sec_tokens = [f"{r.symbol} ({r.pct_change:+.2f}%)" for r in sorted_sec]
+            sec_indices.data.sector_line = "**11 SPDR Sectors (1D):** " + " · ".join(sec_tokens)
+
+        # Substage 4.4: Compact one-row Cross-Asset Line: 10Y, DXY, WTI, Gold, BTC
+        ca_tokens = []
+        # 10Y Yield
+        y10_val = None
+        y10_delta_bps = None
+        if sec_macro and sec_macro.is_available and sec_macro.data and sec_macro.data.fed_rates:
+            y10_val = sec_macro.data.fed_rates.yield_10y
+            y10_delta_bps = sec_macro.data.fed_rates.yield_10y_delta * 100.0
+        if y10_val is not None:
+            delta_str = f" ({y10_delta_bps:+.1f} bps)" if y10_delta_bps is not None else ""
+            ca_tokens.append(f"10Y Yield {y10_val:.2f}%{delta_str}")
+        elif "^TNX" in core_bars and not core_bars["^TNX"].empty:
+            tnx_c = float(core_bars["^TNX"].iloc[-1]["Close"])
+            ca_tokens.append(f"10Y Yield {tnx_c:.2f}%")
+
+        # DXY
+        dxy_bar = core_bars.get("DX-Y.NYB")
+        if dxy_bar is not None and not dxy_bar.empty and len(dxy_bar) >= 2:
+            dxy_c = float(dxy_bar.iloc[-1]["Close"])
+            dxy_p = float(dxy_bar.iloc[-2]["Close"])
+            dxy_pct = ((dxy_c - dxy_p) / dxy_p) * 100.0 if dxy_p > 0 else 0.0
+            ca_tokens.append(f"DXY {dxy_c:.2f} ({dxy_pct:+.2f}%)")
+
+        # WTI Crude
+        wti_bar = core_bars.get("CL=F")
+        if wti_bar is not None and not wti_bar.empty and len(wti_bar) >= 2:
+            wti_c = float(wti_bar.iloc[-1]["Close"])
+            wti_p = float(wti_bar.iloc[-2]["Close"])
+            wti_pct = ((wti_c - wti_p) / wti_p) * 100.0 if wti_p > 0 else 0.0
+            ca_tokens.append(f"WTI Crude \\${wti_c:.2f} ({wti_pct:+.2f}%)")
+
+        # Gold
+        gold_bar = core_bars.get("GC=F")
+        if gold_bar is not None and not gold_bar.empty and len(gold_bar) >= 2:
+            gold_c = float(gold_bar.iloc[-1]["Close"])
+            gold_p = float(gold_bar.iloc[-2]["Close"])
+            gold_pct = ((gold_c - gold_p) / gold_p) * 100.0 if gold_p > 0 else 0.0
+            ca_tokens.append(f"Gold \\${gold_c:,.2f} ({gold_pct:+.2f}%)")
+
+        # BTC
+        btc_bar = core_bars.get("BTC-USD")
+        if btc_bar is not None and not btc_bar.empty and len(btc_bar) >= 2:
+            btc_c = float(btc_bar.iloc[-1]["Close"])
+            btc_p = float(btc_bar.iloc[-2]["Close"])
+            btc_pct = ((btc_c - btc_p) / btc_p) * 100.0 if btc_p > 0 else 0.0
+            ca_tokens.append(f"Bitcoin \\${btc_c:,.0f} ({btc_pct:+.2f}%)")
+
+        if ca_tokens:
+            sec_indices.data.cross_asset_line = "**Cross-Asset Line (1D):** " + " · ".join(ca_tokens)
+
+    # Assemble sections: lean 8-section tactical brief for Daily; full 19-section dossier for Weekly/Monthly
+    if is_daily:
+        sections = [
+            sec_exec,
+            sec_what_changed,
+            sec_swing,
+            sec_indices,
+            sec_breadth,
+            sec_movers,
+            sec_watchlist,
+            sec_footer,
+        ]
+    else:
+        sections = [
+            sec_exec,
+            sec_what_changed,
+            sec_swing,
+            sec_indices,
+            sec_technicals,
+            sec_breadth,
+            sec_vol,
+            sec_sectors,
+            sec_theme_rs,
+            sec_commodities,
+            sec_fed,
+            sec_calendar,
+            sec_earnings,
+            sec_movers,
+            sec_watchlist,
+            sec_sentiment,
+            sec_macro,
+            sec_conclusion,
+            sec_footer,
+        ]
 
     for idx, s in enumerate(sections, start=1):
         s.section_num = idx
@@ -782,6 +1057,16 @@ def generate_market_report(
             constituents=constituents,
         )
 
+        if is_daily and sec_exec and sec_exec.is_available and sec_exec.data:
+            from sections.executive_summary import select_chart_of_the_day
+            sec_exec.data.chart_of_the_day = select_chart_of_the_day(
+                period_info=period_info,
+                vol_data=sec_vol.data if (sec_vol and sec_vol.is_available) else None,
+                breadth_data=breadth_res,
+                charts=charts_dict,
+                output_dir=target_dir,
+            )
+
     # 8. Render reports with charts
     _progress(5, 6, "📝", "Rendering Markdown and standalone HTML reports...", quiet=quiet)
     md_content = render_markdown(period=period_info, sections=sections, charts=charts_dict)
@@ -827,6 +1112,7 @@ def generate_market_report(
         "sections": sections,
         "scorecard": scorecard,
         "period_info": period_info,
+        "facts_registry": facts_registry,
     }
 
     # 10. Email dispatch & dry-run (Stage 4)

@@ -26,6 +26,16 @@ from sections.valuation import (
 )
 from sections.volatility import build_volatility
 from sections.watchlist import WatchlistData, WatchlistItem, build_watchlist_section
+from sections.historical_analog import (
+    AnalogHorizonStat,
+    AnalogHorizonStats,
+    HistoricalAnalogStudy,
+    MonthlySeasonalityStats,
+    SeasonalityStudy,
+    build_historical_analog,
+    compute_monthly_seasonality,
+    wilson_score_interval,
+)
 
 __all__ = [
     "SectionResult",
@@ -58,4 +68,12 @@ __all__ = [
     "Sp500ValuationRates",
     "build_valuation_section",
     "compute_valuation_vs_rates",
+    "build_historical_analog",
+    "HistoricalAnalogStudy",
+    "AnalogHorizonStats",
+    "AnalogHorizonStat",
+    "wilson_score_interval",
+    "compute_monthly_seasonality",
+    "SeasonalityStudy",
+    "MonthlySeasonalityStats",
 ]

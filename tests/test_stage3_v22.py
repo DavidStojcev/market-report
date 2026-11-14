@@ -424,12 +424,12 @@ def test_markdown_and_html_render_defensive_exception_banner():
     # Render Markdown
     md = render_markdown(period=period, sections=[sec_res])
     assert DEFENSIVE_EXCEPTION_BANNER in md
-    assert "> **⚠️ DEFENSIVE EXCEPTION WARNING" in md
+    assert "DEFENSIVE REGIME OUTLIERS" in md
 
     # Render HTML
     html = render_html(period=period, sections=[sec_res])
     assert DEFENSIVE_EXCEPTION_BANNER in html
-    assert "DEFENSIVE EXCEPTION WARNING" in html
+    assert "DEFENSIVE REGIME OUTLIERS" in html
 
 
 def test_end_to_end_generate_market_report_toggle():

@@ -160,6 +160,7 @@ class FedPathData:
     vote_count: str = "10-2"
     dissents: str = "None"
     real_rate_driver_measure: str = "Core PCE"
+    liquidity: Optional[Any] = None
 
 
 def build_fed_path(
@@ -216,11 +217,24 @@ def build_fed_path(
         else:
             rate_bias = f"Anchored in line with current policy ({eff_ff:.2f}%)"
 
+        liquidity_obj = getattr(macro_data, "liquidity", None) if macro_data else None
+        liq_sentence = ""
+        if liquidity_obj is not None:
+            imp4_str = (
+                f"{liquidity_obj.impulse_4w_b:+,.1f}B"
+                if getattr(liquidity_obj, "impulse_4w_b", None) is not None
+                else "n/a"
+            )
+            liq_sentence = (
+                f" System reserve liquidity (WALCL - TGA - RRP) stands at ${liquidity_obj.net_liquidity_t:.3f}T "
+                f"({liquidity_obj.regime}; 4W impulse: {imp4_str})."
+            )
+
         assessment = (
             f"The Federal Reserve policy stance remains restrictive with a positive real policy rate of {real_policy_rate:+.2f}% "
             f"against trailing {core_measure_name} inflation ({core_inf:.2f}% YoY). The real policy rate benchmark is driven by "
             f"{core_measure_name} (the Fed's primary price stability mandate indicator). The 2-Year Treasury yield sits at {y2:.2f}%, {rate_bias}. "
-            f"The next policy meeting is scheduled for {next_date} ({days_to_next} days away)."
+            f"The next policy meeting is scheduled for {next_date} ({days_to_next} days away).{liq_sentence}"
         )
 
         data = FedPathData(
@@ -242,6 +256,7 @@ def build_fed_path(
             vote_count=fomc_status.vote_count,
             dissents=fomc_status.dissents,
             real_rate_driver_measure=core_measure_name,
+            liquidity=liquidity_obj,
         )
 
         return SectionResult(

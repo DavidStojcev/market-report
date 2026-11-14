@@ -1,0 +1,74 @@
+{
+  "2026-10-30": {
+    "as_of_date": "2026-10-30",
+    "posture": "DEFENSIVE",
+    "ranges": {
+      "CL=F": {
+        "close": 104.12,
+        "range_high": 110.49,
+        "range_low": 92.3
+      },
+      "GC=F": {
+        "close": 3898.9,
+        "range_high": 4126.81,
+        "range_low": 3832.89
+      },
+      "IWM": {
+        "close": 279.33,
+        "range_high": 285.31,
+        "range_low": 271.59
+      },
+      "QQQ": {
+        "close": 690.49,
+        "range_high": 737.46,
+        "range_low": 676.19
+      },
+      "SPY": {
+        "close": 755.72,
+        "range_high": 774.89,
+        "range_low": 746.82
+      },
+      "TLT": {
+        "close": 81.84,
+        "range_high": 82.57,
+        "range_low": 78.5
+      }
+    }
+  },
+  "2026-11-13": {
+    "as_of_date": "2026-11-13",
+    "posture": "DEFENSIVE",
+    "ranges": {
+      "CL=F": {
+        "close": 88.92,
+        "range_high": 103.13,
+        "range_low": 82.97
+      },
+      "GC=F": {
+        "close": 3887.6,
+        "range_high": 4123.1,
+        "range_low": 3798.45
+      },
+      "IWM": {
+        "close": 277.54,
+        "range_high": 285.95,
+        "range_low": 269.79
+      },
+      "QQQ": {
+        "close": 679.89,
+        "range_high": 717.88,
+        "range_low": 649.51
+      },
+      "SPY": {
+        "close": 754.37,
+        "range_high": 774.58,
+        "range_low": 733.97
+      },
+      "TLT": {
+        "close": 79.38,
+        "range_high": 81.47,
+        "range_low": 78.67
+      }
+    }
+  }
+}

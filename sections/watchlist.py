@@ -66,8 +66,9 @@ class WatchlistItem:
     rs_vs_spy: Optional[float] = None
     next_earnings_date: str = "none within 30d"
     sector_breadth_status: str = "n/a"
-    long_permitted: str = "INACTIVE (Gate Defensive)"
+    long_permitted: str = "Defensive Regime (Cautious)"
     readiness: str = "Not ready"
+    why_flagged: str = ""
     is_available: bool = True
     notes: str = ""
 
@@ -135,12 +136,12 @@ def load_watchlist_tickers(csv_path: Union[str, Path] = "watchlist.csv") -> List
 
 
 def resolve_long_permitted(gate_posture: Union[str, Any]) -> str:
-    """Map Swing-Trade Exposure Gate posture to model filter status string.
+    """Map Market Regime posture to strategy-agnostic regime context label.
 
     Rules:
-      - If Gate posture is DEFENSIVE -> "INACTIVE (Gate Defensive)"
-      - If Gate posture is CAUTIOUS / SELECTIVE / REDUCED -> "SELECTIVE (Conservative)"
-      - If Gate posture is OPEN / FULL -> "ACTIVE (Favorable Trend)"
+      - If regime posture is DEFENSIVE -> "Defensive Regime (Cautious)"
+      - If regime posture is CAUTIOUS / SELECTIVE / REDUCED -> "Mixed Regime (Selective)"
+      - If regime posture is OPEN / FULL -> "Risk-On Regime (Supportive)"
     """
     posture_str = ""
     if isinstance(gate_posture, str):
@@ -153,16 +154,16 @@ def resolve_long_permitted(gate_posture: Union[str, Any]) -> str:
     p_clean = posture_str.strip().upper()
 
     if any(k in p_clean for k in ("DEFENSIVE", "BLOCKED", "CLOSED", "SHUT", "INACTIVE")):
-        return "INACTIVE (Gate Defensive)"
-    elif any(k in p_clean for k in ("CAUTIOUS", "SELECTIVE", "REDUCED", "HALF")):
-        return "SELECTIVE (Conservative)"
-    elif any(k in p_clean for k in ("OPEN", "FULL", "PERMITTED", "ACTIVE")):
-        return "ACTIVE (Favorable Trend)"
+        return "Defensive Regime (Cautious)"
+    elif any(k in p_clean for k in ("CAUTIOUS", "SELECTIVE", "REDUCED", "HALF", "MIXED")):
+        return "Mixed Regime (Selective)"
+    elif any(k in p_clean for k in ("OPEN", "FULL", "PERMITTED", "ACTIVE", "RISK-ON", "SUPPORTIVE")):
+        return "Risk-On Regime (Supportive)"
     else:
         # Default safety fallback
         if "DEF" in p_clean:
-            return "INACTIVE (Gate Defensive)"
-        return "SELECTIVE (Conservative)"
+            return "Defensive Regime (Cautious)"
+        return "Mixed Regime (Selective)"
 
 
 def compute_atr_14(df: pd.DataFrame) -> Optional[float]:
@@ -257,7 +258,7 @@ def build_watchlist_section(
             else:
                 return SectionResult(
                     section_num=section_num,
-                    title="Tactical Watchlist Panel",
+                    title="Focus Universe & Screener Matrix",
                     status="unavailable",
                     error_message=f"Watchlist file '{watchlist_path}' not found or contains no valid tickers.",
                     data=WatchlistData(
@@ -334,8 +335,8 @@ def build_watchlist_section(
         if hasattr(calendar_provider, "get_upcoming_earnings"):
             try:
                 start_query = as_of_date or "2026-01-01"
-                # Query upcoming earnings for 90 days out
-                end_dt = (pd.to_datetime(start_query) + pd.Timedelta(days=90)).strftime("%Y-%m-%d")
+                # Query upcoming earnings strictly for next 30 days (matching "none within 30d")
+                end_dt = (pd.to_datetime(start_query) + pd.Timedelta(days=30)).strftime("%Y-%m-%d")
                 events = calendar_provider.get_upcoming_earnings(start_date=start_query, end_date=end_dt, symbols=tickers)
                 for ev in events:
                     if ev.symbol and ev.date:
@@ -451,6 +452,7 @@ def build_watchlist_section(
                     sector_breadth_status=sec_breadth_str,
                     long_permitted=long_directive,
                     readiness="Not ready",
+                    why_flagged="Price history unavailable",
                     is_available=False,
                     notes="Price series data unavailable in bar cache.",
                 )
@@ -475,6 +477,7 @@ def build_watchlist_section(
                     sector_breadth_status=sec_breadth_str,
                     long_permitted=long_directive,
                     readiness="Not ready",
+                    why_flagged="No price history prior to report date",
                     is_available=False,
                     notes=f"No price history prior to as_of_date {as_of_date}.",
                 )
@@ -567,12 +570,13 @@ def build_watchlist_section(
         else:
             readiness_val = "Not ready"
 
-        # Defensive Exception candidate evaluation (Stage 3: 3.2)
-        # When gate is DEFENSIVE, apply the same exception rules used in Section 8:
+        # Defensive Exception candidate evaluation (Stage 3: 3.2 + Stage 2.3 3M RS >= +5% floor)
+        # When gate is DEFENSIVE, require:
         # a. Sector 50-DMA breadth >= 70.0%
         # b. Sector net new highs > 0 (or market net new highs > 0)
         # c. Stock price above 50-DMA
         # d. Stock price within 10% of 52-week high
+        # e. 3M Relative Strength vs SPY >= +5.0%
         is_defensive_gate = any(k in p_clean for k in ("DEFENSIVE", "BLOCKED", "CLOSED", "SHUT", "INACTIVE"))
         is_exception = False
         if is_defensive_gate:
@@ -580,10 +584,41 @@ def build_watchlist_section(
             cond_b = ((sec_nnh_num is not None and sec_nnh_num > 0) or (market_net_new_highs is not None and market_net_new_highs > 0))
             cond_c = (dist_50 is not None and dist_50 > 0.0)
             cond_d = (dist_52w is not None and dist_52w >= -10.0)
-            if cond_a and cond_b and cond_c and cond_d:
+            cond_e = (rs_vs_spy is not None and rs_vs_spy >= 5.0)
+            if cond_a and cond_b and cond_c and cond_d and cond_e:
                 is_exception = True
 
-        item_long_permitted = "Exception candidate (gate Defensive)" if is_exception else long_directive
+        item_long_permitted = "Outlier Leader (Defensive Regime)" if is_exception else long_directive
+
+        if is_exception:
+            sec_pct_str = f"{sec_breadth_num:.0f}%" if sec_breadth_num is not None else "n/a"
+            why_flagged = (
+                f"3M RS {rs_vs_spy:+.1f}% (≥+5%), {dist_52w:+.1f}% vs 52W high, sector {sec_pct_str} > 50-DMA"
+            )
+        elif readiness_val == "Ready":
+            rs_part = f"3M RS {rs_vs_spy:+.1f}%" if rs_vs_spy is not None else "trend intact"
+            sec_part = f", sector {sec_breadth_num:.0f}% > 50-DMA" if sec_breadth_num is not None else ""
+            why_flagged = f"Above 20/50-DMA, {rs_part}{sec_part}"
+        else:
+            reasons: List[str] = []
+            if rs_vs_spy is not None and rs_vs_spy < 0:
+                reasons.append(f"Lagging 3M RS ({rs_vs_spy:+.1f}%)")
+            elif rs_vs_spy is not None and rs_vs_spy < 5.0 and is_defensive_gate:
+                reasons.append(f"3M RS {rs_vs_spy:+.1f}% (<+5% outlier floor)")
+            if dist_50 is not None and dist_50 <= 0:
+                reasons.append(f"below 50-DMA ({dist_50:+.1f}%)")
+            elif dist_20 is not None and dist_20 <= 0:
+                reasons.append(f"below 20-DMA ({dist_20:+.1f}%)")
+            if sec_breadth_num is not None and sec_breadth_num < 50.0:
+                reasons.append(f"sector breadth {sec_breadth_num:.0f}% (<50%)")
+            if not reasons:
+                why_flagged = (
+                    f"3M RS {rs_vs_spy:+.1f}%, monitoring structure"
+                    if rs_vs_spy is not None
+                    else "Monitoring structure"
+                )
+            else:
+                why_flagged = "; ".join(reasons)
 
         items.append(
             WatchlistItem(
@@ -600,6 +635,7 @@ def build_watchlist_section(
                 sector_breadth_status=sec_breadth_str,
                 long_permitted=item_long_permitted,
                 readiness=readiness_val,
+                why_flagged=why_flagged,
                 is_available=True,
                 notes="",
             )
@@ -616,10 +652,18 @@ def build_watchlist_section(
 
     # 9. Compute aggregate summary metrics
     total_c = len(items)
-    blocked_c = sum(1 for it in items if any(k in it.long_permitted for k in ("BLOCKED", "INACTIVE", "Inactive")))
-    selective_c = sum(1 for it in items if "SELECTIVE" in it.long_permitted)
-    permitted_c = sum(1 for it in items if "PERMITTED" in it.long_permitted or it.long_permitted.startswith("ACTIVE"))
-    exception_c = sum(1 for it in items if "Exception candidate" in it.long_permitted)
+    blocked_c = sum(
+        1 for it in items
+        if "Outlier Leader" not in it.long_permitted
+        and "Exception candidate" not in it.long_permitted
+        and any(k in it.long_permitted for k in ("Defensive Regime", "BLOCKED", "INACTIVE", "Inactive"))
+    )
+    selective_c = sum(1 for it in items if any(k in it.long_permitted for k in ("Mixed Regime", "SELECTIVE")))
+    permitted_c = sum(
+        1 for it in items
+        if "Risk-On Regime" in it.long_permitted or "PERMITTED" in it.long_permitted or it.long_permitted.startswith("ACTIVE")
+    )
+    exception_c = sum(1 for it in items if any(k in it.long_permitted for k in ("Outlier Leader", "Exception candidate")))
 
     data = WatchlistData(
         as_of_date=as_of_date or "",
@@ -638,7 +682,7 @@ def build_watchlist_section(
 
     return SectionResult(
         section_num=section_num,
-        title="Tactical Watchlist Panel",
+        title="Focus Universe & Screener Matrix",
         status="available",
         data=data,
         error_message=None,

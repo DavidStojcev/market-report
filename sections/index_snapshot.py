@@ -30,6 +30,18 @@ class IndexSnapshotRow:
 class IndexSnapshotData:
     rows: List[IndexSnapshotRow]
     valuation: Optional[Any] = None
+    sector_line: Optional[str] = None
+    cross_asset_line: Optional[str] = None
+
+
+ETF_VOLUME_PROXIES: Dict[str, str] = {
+    "^NDX": "QQQ",
+    "NDX": "QQQ",
+    "^IXIC": "ONEQ",
+    "IXIC": "ONEQ",
+    "^RUT": "IWM",
+    "RUT": "IWM",
+}
 
 
 def build_index_snapshot(
@@ -41,7 +53,7 @@ def build_index_snapshot(
     
     Ensures volume metrics are verified:
     - If an index volume is zero, constant, or identical to another index, shows 'n/a'.
-    - Uses the liquid ETF proxy (QQQ) for Nasdaq-100 (^NDX) volume and labels it explicitly.
+    - Uses liquid ETF proxies (QQQ for ^NDX, ONEQ for ^IXIC, IWM for ^RUT) and labels them explicitly.
     """
     rows: List[IndexSnapshotRow] = []
 
@@ -51,10 +63,13 @@ def build_index_snapshot(
     prev_base_dt = pd.to_datetime(period.prev_baseline_date)
     period_start_dt = pd.to_datetime(period.current_start)
 
-    # Pre-scan raw volume series across all indices to detect duplicate series across indices
+    # Pre-scan raw volume series across all indices without ETF proxies to detect duplicate series
     native_volumes: Dict[str, List[float]] = {}
     duplicate_symbols = set()
     for item in index_symbols:
+        proxy_ticker = ETF_VOLUME_PROXIES.get(item.symbol)
+        if proxy_ticker and proxy_ticker in bars:
+            continue
         df_sym = bars.get(item.symbol)
         if df_sym is not None and not df_sym.empty and "Volume" in df_sym.columns:
             s_v = df_sym[df_sym.index <= curr_end_dt]["Volume"].replace(0, np.nan).dropna()
@@ -62,12 +77,7 @@ def build_index_snapshot(
             if len(v_list) >= 3:
                 for other_sym, other_v in native_volumes.items():
                     if other_v == v_list:
-                        if item.symbol in ("^NDX", "NDX") and "QQQ" in bars:
-                            duplicate_symbols.add(other_sym)
-                        elif other_sym in ("^NDX", "NDX") and "QQQ" in bars:
-                            duplicate_symbols.add(item.symbol)
-                        else:
-                            duplicate_symbols.add(item.symbol)
+                        duplicate_symbols.add(item.symbol)
                 native_volumes[item.symbol] = v_list
 
     for item in index_symbols:
@@ -115,9 +125,10 @@ def build_index_snapshot(
         is_proxy = False
         proxy_sym = None
 
-        # Check if ETF proxy should be used (e.g. QQQ for Nasdaq-100 ^NDX)
-        if item.symbol in ("^NDX", "NDX") and "QQQ" in bars:
-            proxy_df = bars.get("QQQ")
+        # Check if an ETF volume proxy should be used (e.g. QQQ for ^NDX, ONEQ for ^IXIC, IWM for ^RUT)
+        proxy_ticker = ETF_VOLUME_PROXIES.get(item.symbol)
+        if proxy_ticker and proxy_ticker in bars:
+            proxy_df = bars.get(proxy_ticker)
             if proxy_df is not None and not proxy_df.empty:
                 p_sub = proxy_df[proxy_df.index <= curr_end_dt]
                 p_slice = p_sub[(p_sub.index >= period_start_dt) & (p_sub.index <= curr_end_dt)]
@@ -131,9 +142,9 @@ def build_index_snapshot(
                 if volume > 0 and len(p_all_vols) >= 5:
                     avg_vol_20 = float(p_all_vols.tail(20).mean())
                     vol_ratio = (volume / avg_vol_20) if avg_vol_20 > 0 else 0.0
-                    vol_ratio_display = f"{vol_ratio:.2f}x (QQQ)"
+                    vol_ratio_display = f"{vol_ratio:.2f}x ({proxy_ticker})"
                     is_proxy = True
-                    proxy_sym = "QQQ"
+                    proxy_sym = proxy_ticker
         else:
             # Native index volume verification
             period_slice = df_sub[(df_sub.index >= period_start_dt) & (df_sub.index <= curr_end_dt)]

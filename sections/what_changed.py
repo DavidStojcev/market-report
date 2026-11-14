@@ -162,6 +162,44 @@ def build_what_changed(
                 )
             )
 
+        # 6. Fallback macro/market deltas when sector rotation ranks are unchanged (< 5 items)
+        if len(deltas) < 5 and macro_data and getattr(macro_data, "fed_rates", None):
+            fr = macro_data.fed_rates
+            if getattr(fr, "yield_10y", None) is not None and getattr(fr, "yield_10y_delta", None) is not None:
+                y10_curr = float(fr.yield_10y)
+                y10_delta_pct = float(fr.yield_10y_delta)
+                y10_prior = y10_curr - y10_delta_pct
+                y10_delta_bps = y10_delta_pct * 100.0
+                val_y10 = "negative" if y10_delta_bps > 5.0 else ("positive" if y10_delta_bps < -5.0 else "neutral")
+                deltas.append(
+                    DeltaMetric(
+                        name="10-Year Treasury Yield",
+                        current_val=f"{y10_curr:.2f}%",
+                        prior_val=f"{y10_prior:.2f}%",
+                        delta_str=f"{y10_delta_bps:+.1f} bps",
+                        valence=val_y10,
+                        detail=f"Benchmark 10Y Treasury yield moved {y10_delta_bps:+.1f} bps to {y10_curr:.2f}% (curve status: {getattr(fr, 'curve_status', 'Normal')}).",
+                    )
+                )
+
+        if len(deltas) < 5 and intel and getattr(intel, "vol_term", None):
+            vt = intel.vol_term
+            vix_1m = getattr(vt, "vix_1m", None)
+            ratio_d = getattr(vt, "ratio_delta", None)
+            if vix_1m is not None:
+                prior_ratio = vt.ratio - (ratio_d or 0.0)
+                val_vt = "positive" if (ratio_d or 0.0) <= 0 else "negative"
+                deltas.append(
+                    DeltaMetric(
+                        name="CBOE VIX & Term Ratio (1M/3M)",
+                        current_val=f"{vix_1m:.2f} ({vt.ratio:.3f})",
+                        prior_val=f"{prior_ratio:.3f} ratio",
+                        delta_str=f"{(ratio_d or 0.0):+.3f}",
+                        valence=val_vt,
+                        detail=f"Spot VIX at {vix_1m:.2f} with 1M/3M term structure {vt.structure.lower()} ({vt.ratio:.3f}).",
+                    )
+                )
+
         # Keep strictly top 5
         top_5_deltas = deltas[:5]
 
@@ -183,10 +221,10 @@ def build_what_changed(
                 ev_imp = str(getattr(ev, "importance", "")).lower()
                 ev_title = str(getattr(ev, "title", "")).lower()
                 is_high = (
-                    ev_imp == "high"
-                    or any(k in ev_title for k in [
-                        "fomc", "payrolls", "employment situation", "cpi", "consumer price index",
-                        "chair keynote", "chair speech", "refunding", "election"
+                    "minutes" not in ev_title
+                    and any(k in ev_title for k in [
+                        "fomc", "rate decision", "payrolls", "employment situation", "cpi", "consumer price index",
+                        "pce", "chair keynote", "chair speech", "chair press", "refunding", "election"
                     ])
                 )
                 if is_high:

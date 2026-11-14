@@ -33,6 +33,8 @@ class SentimentPositioningData:
     fund_flows_status: str = "n/a (source unavailable)"
     assessment: str = ""
     items: List[SentimentMetricItem] = field(default_factory=list)
+    cot_positions: List[Any] = field(default_factory=list)
+    cot_source: str = "CFTC Commitments of Traders (Legacy/TFF Public Domain)"
 
 
 def build_sentiment_positioning(
@@ -45,6 +47,9 @@ def build_sentiment_positioning(
     rsp_df: Optional[pd.DataFrame] = None,
     put_call_vol_ratio: Optional[float] = None,
     put_call_oi_ratio: Optional[float] = None,
+    skew_level: Optional[float] = None,
+    vvix_level: Optional[float] = None,
+    cot_positions: Optional[List[Any]] = None,
 ) -> SectionResult:
     """Calculate 20-day realized volatility, volatility risk premium, and sentiment metrics."""
     try:
@@ -66,19 +71,22 @@ def build_sentiment_positioning(
             vol_regime = "Substantial Premium (Complacency / Strong Hedging Demand)"
             v_desc = (
                 f"The Volatility Risk Premium is elevated at {vol_risk_premium:+.2f} pts (VIX {vix_current:.2f} vs. 20-day Realized Vol {realized_vol_20d:.2f}%). "
-                f"Option sellers are capturing substantial implied premium over actual market variance, signaling active portfolio hedging."
+                f"Option sellers are capturing substantial implied premium over actual market variance, signaling active portfolio hedging. "
+                f"(Note: CBOE volatility surface signals are scored within the Volatility & Risk Appetite category; the Sentiment & Positioning composite category remains excluded until external AAII/Put-Call survey feeds are connected.)"
             )
         elif vol_risk_premium <= -2.0:
             vol_regime = "Discount / Inversion (Realized Volatility Exceeds Implied)"
             v_desc = (
                 f"The Volatility Risk Premium is inverted at {vol_risk_premium:+.2f} pts (VIX {vix_current:.2f} vs. 20-day Realized Vol {realized_vol_20d:.2f}%). "
-                f"Actual equity price swings have exceeded options pricing, typical of sharp gap selloffs or unpriced systemic volatility."
+                f"Actual equity price swings have exceeded options pricing, typical of sharp gap selloffs or unpriced systemic volatility. "
+                f"(Note: CBOE volatility surface signals are scored within the Volatility & Risk Appetite category; the Sentiment & Positioning composite category remains excluded until external AAII/Put-Call survey feeds are connected.)"
             )
         else:
             vol_regime = "Normal Volatility Equilibrium"
             v_desc = (
                 f"The Volatility Risk Premium sits near equilibrium at {vol_risk_premium:+.2f} pts (VIX {vix_current:.2f} vs. 20-day Realized Vol {realized_vol_20d:.2f}%). "
-                f"Implied options pricing is appropriately reflecting trailing realized market turbulence."
+                f"Implied options pricing is appropriately reflecting trailing realized market turbulence. "
+                f"(Note: CBOE volatility surface signals are scored within the Volatility & Risk Appetite category; the Sentiment & Positioning composite category remains excluded until external AAII/Put-Call survey feeds are connected.)"
             )
 
         items: List[SentimentMetricItem] = []
@@ -111,6 +119,32 @@ def build_sentiment_positioning(
                 )
             )
 
+        if vvix_level is not None and vvix_level > 0:
+            vvix_note = (
+                "Calm vol-of-vol (<85)" if vvix_level < 85.0
+                else ("Normal vol-of-vol (85–105)" if vvix_level <= 105.0 else "Elevated convexity / VIX call demand (>105)")
+            )
+            items.append(
+                SentimentMetricItem(
+                    name="CBOE VVIX Index (Volatility of VIX)",
+                    reading=f"{vvix_level:.2f}",
+                    diagnostic=f"Vol-of-vol index at {vvix_level:.2f} — {vvix_note}",
+                )
+            )
+
+        if skew_level is not None and skew_level > 0:
+            skew_note = (
+                "Heavy OTM put tail hedging demand (>145)" if skew_level > 145.0
+                else ("Moderate downside tail skew (130–145)" if skew_level >= 130.0 else "Compressed OTM put skew (<130)")
+            )
+            items.append(
+                SentimentMetricItem(
+                    name="CBOE SKEW Index (Left-Tail Options Pricing)",
+                    reading=f"{skew_level:.2f}",
+                    diagnostic=f"Tail skew index at {skew_level:.2f} — {skew_note}",
+                )
+            )
+
         if rsp_df is not None and spy_df is not None and not rsp_df.empty and not spy_df.empty:
             try:
                 rsp_sub = rsp_df[rsp_df.index <= as_of_dt]
@@ -130,6 +164,14 @@ def build_sentiment_positioning(
             except Exception as e:
                 logger.debug("Failed computing RSP vs SPY spread: %s", e)
 
+        if cot_positions is None:
+            try:
+                from data.cot_provider import COTProvider
+                cot_positions = COTProvider().get_positioning(as_of_date)
+            except Exception as e:
+                logger.warning("Failed fetching COT positions: %s", e)
+                cot_positions = []
+
         data = SentimentPositioningData(
             as_of_date=as_of_date,
             vix=vix_current,
@@ -144,6 +186,7 @@ def build_sentiment_positioning(
             fund_flows_status="n/a (source unavailable; official ETF flow aggregator not enabled)",
             assessment=v_desc,
             items=items,
+            cot_positions=cot_positions or [],
         )
 
         return SectionResult(

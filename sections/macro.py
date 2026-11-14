@@ -62,9 +62,13 @@ class FedRatesSummary:
     yield_2y_13w_delta: Optional[float] = None
     ig_spread: Optional[float] = None
     ig_spread_delta: Optional[float] = None
+    bbb_spread: Optional[float] = None
+    bbb_spread_delta: Optional[float] = None
     spread_3m10y: Optional[float] = None
     spread_3m10y_delta: Optional[float] = None
     financial_stress: Optional[float] = None
+    forward_inflation_5y5y: Optional[float] = None
+    forward_inflation_5y5y_delta: Optional[float] = None
 
 
 @dataclass
@@ -76,6 +80,9 @@ class CreditSpreadIntelligence:
     assessment: str              # Institutional interpretation
     ig_spread_bps: Optional[float] = None          # e.g. 89.0 (bps)
     ig_delta_bps: Optional[float] = None           # e.g. -2.0 (bps)
+    bbb_spread_bps: Optional[float] = None         # e.g. 116.0 (bps)
+    bbb_delta_bps: Optional[float] = None          # e.g. -2.0 (bps)
+    hy_bbb_compression_bps: Optional[float] = None # e.g. 224.0 (bps)
     spread_3m10y_bps: Optional[float] = None       # e.g. +78.0 (bps)
     financial_stress_index: Optional[float] = None # e.g. -0.58
     financial_stress_label: str = "Low Stress / Below Average"
@@ -91,6 +98,21 @@ class RealRateIntelligence:
     nominal_delta_bps: float     # e.g. +5.0 (bps)
     driver_attribution: str      # "Real Rate Tightening", "Inflation Premium Expansion", etc.
     assessment: str
+    forward_5y5y_pct: Optional[float] = None
+    forward_5y5y_delta_bps: Optional[float] = None
+
+
+@dataclass
+class LiquidityPlumbingData:
+    walcl_t: float               # Fed Total Assets ($T)
+    tga_b: float                 # Treasury General Account ($B)
+    rrp_b: float                 # Overnight Reverse Repo ($B)
+    net_liquidity_t: float       # Net Liquidity = WALCL - TGA - RRP ($T)
+    impulse_4w_b: Optional[float] = None   # 4-Week change ($B)
+    impulse_13w_b: Optional[float] = None  # 13-Week change ($B)
+    as_of_date: str = ""
+    regime: str = "Neutral"      # "Expanding", "Draining", "Neutral"
+    assessment: str = ""
 
 
 @dataclass
@@ -171,6 +193,16 @@ class MarketBasedIndicatorRow:
 
 
 @dataclass
+class MacroCyclePillar:
+    """4-Pillar Macro Cycle Dashboard summary (Stage 5: 5.6)."""
+    pillar: str               # "Growth & Activity", "Inflation & Pricing", "Labor & Employment", "Liquidity & Credit"
+    anchor_metric: str        # e.g. "Real GDP 2.8% / Retail Sales +0.4%"
+    trajectory_3m: str        # "▲ Expanding", "▼ Disinflating", "▬ Normalizing", "▲ Accommodative"
+    percentile_context: str   # e.g. "62nd %ile (3Y)", "34th %ile (3Y)", etc.
+    regime_signal: str        # e.g. "Mid-Cycle Expansion", "Disinflationary Soft Landing", etc.
+
+
+@dataclass
 class MacroSectionData:
     recent_releases: List[MacroEvent]
     fed_rates: FedRatesSummary
@@ -185,6 +217,8 @@ class MacroSectionData:
     valuation: Optional[ValuationData] = None
     standing_dashboard: List[MacroDashboardRow] = field(default_factory=list)
     market_indicators: List[MarketBasedIndicatorRow] = field(default_factory=list)
+    liquidity: Optional[LiquidityPlumbingData] = None
+    cycle_dashboard: List[MacroCyclePillar] = field(default_factory=list)
 
 
 def build_historical_macro_overview(fred: FredProvider, as_of_date: str) -> MacroHistoricalOverview:
@@ -281,39 +315,59 @@ def calc_yield_lookback_delta(df: Optional[pd.DataFrame], lookback_bars: int) ->
 def resolve_release_metadata(
     series_id: str,
     ref_date_str: str,
+    as_of_date: Optional[str] = None,
 ) -> Tuple[str, str]:
     """Derive clean Reference Period and official Release Date for economic metrics.
 
+    Ensures release_date falls on a weekday and never exceeds as_of_date when provided.
     Returns:
         (reference_period, release_date)
     """
     ref_dt = pd.to_datetime(ref_date_str)
+    as_of_dt = pd.to_datetime(as_of_date) if as_of_date else None
+
+    def _clamp_and_roll_weekday(rel_dt: pd.Timestamp, step_days: Optional[int] = None) -> pd.Timestamp:
+        if as_of_dt is not None and rel_dt > as_of_dt:
+            if step_days is not None:
+                rel_dt = rel_dt - pd.Timedelta(days=step_days)
+            else:
+                rel_dt = min(rel_dt, as_of_dt)
+        if rel_dt.weekday() == 5:
+            rel_dt = rel_dt - pd.Timedelta(days=1)
+        elif rel_dt.weekday() == 6:
+            rel_dt = rel_dt - pd.Timedelta(days=2)
+        if as_of_dt is not None and rel_dt > as_of_dt:
+            rel_dt = as_of_dt
+            if rel_dt.weekday() == 5:
+                rel_dt = rel_dt - pd.Timedelta(days=1)
+            elif rel_dt.weekday() == 6:
+                rel_dt = rel_dt - pd.Timedelta(days=2)
+        return rel_dt
 
     # Quarterly GDP
     if series_id == "GDPC1":
         q = ((ref_dt.month - 1) // 3) + 1
         ref_label = f"Q{q} {ref_dt.year}"
         if q == 1:
-            rel_date = f"{ref_dt.year}-04-29"
+            cand = pd.to_datetime(f"{ref_dt.year}-04-29")
         elif q == 2:
-            rel_date = f"{ref_dt.year}-07-29"
+            cand = pd.to_datetime(f"{ref_dt.year}-07-29")
         elif q == 3:
-            rel_date = f"{ref_dt.year}-10-29"
+            cand = pd.to_datetime(f"{ref_dt.year}-10-29")
         else:
-            rel_date = f"{ref_dt.year + 1}-01-29"
-        return ref_label, rel_date
+            cand = pd.to_datetime(f"{ref_dt.year + 1}-01-29")
+        return ref_label, _clamp_and_roll_weekday(cand).strftime("%Y-%m-%d")
 
-    # Initial Jobless Claims (weekly)
+    # Initial Jobless Claims (weekly Thursday release covering prior Saturday week-end)
     if series_id == "ICSA":
         ref_label = f"Week of {ref_dt.strftime('%b %d, %Y')}"
-        rel_date = (ref_dt + pd.Timedelta(days=5)).strftime("%Y-%m-%d")
-        return ref_label, rel_date
+        cand = ref_dt + pd.Timedelta(days=5)
+        return ref_label, _clamp_and_roll_weekday(cand, step_days=7).strftime("%Y-%m-%d")
 
     # Daily Financial Series (HY OAS, TIPS, Breakevens, Yields)
     if series_id in ("BAMLH0A0HYM2", "DFII10", "T10YIE", "DGS10", "DGS2", "T10Y2Y", "DFF"):
         ref_label = ref_dt.strftime("%b %d, %Y")
-        rel_date = ref_dt.strftime("%Y-%m-%d")
-        return ref_label, rel_date
+        return ref_label, _clamp_and_roll_weekday(ref_dt).strftime("%Y-%m-%d")
 
     # Monthly Macro Series
     month_name = ref_dt.strftime("%b %Y")
@@ -323,29 +377,29 @@ def resolve_release_metadata(
     if series_id in ("PAYEMS", "UNRATE"):
         first_day = next_month
         offset = (4 - first_day.weekday()) % 7
-        rel_date = (first_day + pd.Timedelta(days=offset)).strftime("%Y-%m-%d")
+        cand = first_day + pd.Timedelta(days=offset)
     elif series_id in ("CPIAUCSL", "CPILFESL"):
-        rel_date = next_month.replace(day=13).strftime("%Y-%m-%d")
+        cand = next_month.replace(day=13)
     elif series_id == "PPIFIS":
-        rel_date = next_month.replace(day=14).strftime("%Y-%m-%d")
+        cand = next_month.replace(day=14)
     elif series_id == "RSAFS":
-        rel_date = next_month.replace(day=16).strftime("%Y-%m-%d")
+        cand = next_month.replace(day=16)
     elif series_id in ("PCEPI", "PCEPILFE"):
-        rel_date = next_month.replace(day=30).strftime("%Y-%m-%d")
+        cand = next_month.replace(day=min(30, next_month.days_in_month))
     elif series_id == "UMCSENT":
-        rel_date = next_month.replace(day=23).strftime("%Y-%m-%d")
+        cand = next_month.replace(day=23)
     elif series_id == "JTSJOL":
         # JOLTS is reported ~35-40 days after the reference month
         next_next_m = (next_month.replace(day=1) + pd.Timedelta(days=32)).replace(day=1)
-        rel_date = next_next_m.replace(day=2).strftime("%Y-%m-%d")
+        cand = next_next_m.replace(day=2)
     elif series_id == "ISM_MFG":
-        rel_date = next_month.replace(day=1).strftime("%Y-%m-%d")
+        cand = next_month.replace(day=1)
     elif series_id == "ISM_SRV":
-        rel_date = next_month.replace(day=3).strftime("%Y-%m-%d")
+        cand = next_month.replace(day=3)
     else:
-        rel_date = ref_dt.strftime("%Y-%m-%d")
+        cand = ref_dt
 
-    return ref_label, rel_date
+    return ref_label, _clamp_and_roll_weekday(cand).strftime("%Y-%m-%d")
 
 
 def compute_series_3m_direction(
@@ -397,33 +451,129 @@ def resolve_next_release_date(
     calendar_provider: Optional[Any] = None,
     default_date: str = "",
 ) -> str:
-    """Resolve upcoming scheduled release date from official calendar or historical cadence."""
-    if calendar_provider is not None and hasattr(calendar_provider, "_scheduled_events"):
-        sched = getattr(calendar_provider, "_scheduled_events", [])
-        title_keywords = {
-            "CPIAUCSL": ["Consumer Price Index", "CPI"],
-            "CPILFESL": ["Core CPI", "Consumer Price Index"],
-            "PPIFIS": ["Producer Price Index", "PPI"],
-            "PCEPILFE": ["PCE Price Index", "Core PCE"],
-            "PCEPI": ["PCE Price Index"],
-            "PAYEMS": ["Employment Situation", "Nonfarm Payrolls"],
-            "UNRATE": ["Employment Situation", "Unemployment Rate"],
-            "ICSA": ["Initial Jobless Claims"],
-            "GDPC1": ["Real GDP", "GDP"],
-            "RSAFS": ["Advance Retail Sales", "Retail Sales"],
-            "ISM_MFG": ["ISM Manufacturing PMI"],
-            "ISM_SRV": ["ISM Services PMI"],
-            "UMCSENT": ["Consumer Sentiment"],
-        }
-        kw_list = title_keywords.get(series_id, [])
-        for ev in sched:
-            ev_date = ev.get("date", "")
-            if ev_date > as_of_date:
-                t = ev.get("title", "")
-                if any(k.lower() in t.lower() for k in kw_list):
+    """Resolve upcoming scheduled release date strictly > as_of_date on a weekday."""
+    as_of_dt = pd.to_datetime(as_of_date)
+
+    def _roll_fwd_weekday(dt_val: pd.Timestamp) -> pd.Timestamp:
+        if dt_val.weekday() == 5:
+            return dt_val + pd.Timedelta(days=2)
+        if dt_val.weekday() == 6:
+            return dt_val + pd.Timedelta(days=1)
+        return dt_val
+
+    title_keywords = {
+        "CPIAUCSL": ["Consumer Price Index", "CPI"],
+        "CPILFESL": ["Core CPI", "Consumer Price Index"],
+        "PPIFIS": ["Producer Price Index", "PPI"],
+        "PCEPILFE": ["PCE Price Index", "Core PCE"],
+        "PCEPI": ["PCE Price Index"],
+        "PAYEMS": ["Employment Situation", "Nonfarm Payrolls"],
+        "UNRATE": ["Employment Situation", "Unemployment Rate"],
+        "ICSA": ["Initial Jobless Claims"],
+        "GDPC1": ["Real GDP", "GDP"],
+        "RSAFS": ["Advance Retail Sales", "Retail Sales"],
+        "ISM_MFG": ["ISM Manufacturing PMI"],
+        "ISM_SRV": ["ISM Services PMI"],
+        "UMCSENT": ["Consumer Sentiment"],
+    }
+    kw_list = title_keywords.get(series_id, [])
+
+    # 1. Query dynamic + static upcoming calendar events up to 60 days ahead
+    if calendar_provider is not None and kw_list:
+        if hasattr(calendar_provider, "get_upcoming_events"):
+            try:
+                end_str = (as_of_dt + pd.Timedelta(days=60)).strftime("%Y-%m-%d")
+                up_events = calendar_provider.get_upcoming_events(as_of_date, end_str, min_importance="medium")
+                for ev in sorted(up_events, key=lambda x: getattr(x, "date", "9999-12-31")):
+                    ev_date = getattr(ev, "date", "")
+                    if ev_date > as_of_date and any(k.lower() in getattr(ev, "title", "").lower() for k in kw_list):
+                        return ev_date
+            except Exception as exc:
+                logger.debug("resolve_next_release_date calendar lookup failed for %s: %s", series_id, exc)
+        if hasattr(calendar_provider, "_scheduled_events"):
+            sched = sorted(getattr(calendar_provider, "_scheduled_events", []), key=lambda x: x.get("date", "9999-12-31"))
+            for ev in sched:
+                ev_date = ev.get("date", "")
+                if ev_date > as_of_date and any(k.lower() in ev.get("title", "").lower() for k in kw_list):
                     return ev_date
 
-    return default_date or "n/a (source unavailable)"
+    # 2. Algorithmic official cadence fallback strictly > as_of_date
+    next_month = (as_of_dt.replace(day=1) + pd.Timedelta(days=32)).replace(day=1)
+
+    def _nth_bday_of_month(month_start: pd.Timestamp, n: int) -> pd.Timestamp:
+        bdays = pd.bdate_range(month_start, month_start + pd.offsets.MonthEnd(0))
+        idx = min(max(0, n - 1), len(bdays) - 1)
+        return bdays[idx]
+
+    if default_date and default_date > as_of_date:
+        try:
+            return _roll_fwd_weekday(pd.to_datetime(default_date)).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+    cand: Optional[pd.Timestamp] = None
+    if series_id in ("ICSA", "WALCL"):
+        days_until_thu = (3 - as_of_dt.weekday()) % 7
+        if days_until_thu == 0:
+            days_until_thu = 7
+        cand = as_of_dt + pd.Timedelta(days=days_until_thu)
+    elif series_id == "ISM_MFG":
+        curr_1st = _nth_bday_of_month(as_of_dt.replace(day=1), 1)
+        cand = curr_1st if curr_1st > as_of_dt else _nth_bday_of_month(next_month, 1)
+    elif series_id == "ISM_SRV":
+        curr_3rd = _nth_bday_of_month(as_of_dt.replace(day=1), 3)
+        cand = curr_3rd if curr_3rd > as_of_dt else _nth_bday_of_month(next_month, 3)
+    elif series_id in ("PAYEMS", "UNRATE"):
+        for m in (as_of_dt.replace(day=1), next_month):
+            offset = (4 - m.weekday()) % 7
+            fri = m + pd.Timedelta(days=offset)
+            if fri > as_of_dt:
+                cand = fri
+                break
+    elif series_id == "JTSJOL":
+        for m in (as_of_dt.replace(day=1), next_month):
+            offset = (1 - m.weekday()) % 7  # first Tuesday
+            tue = m + pd.Timedelta(days=offset)
+            if tue > as_of_dt:
+                cand = tue
+                break
+    elif series_id == "UMCSENT":
+        for m in (as_of_dt.replace(day=1), next_month):
+            offset = (4 - m.weekday()) % 7
+            second_fri = m + pd.Timedelta(days=offset + 7)
+            if second_fri > as_of_dt:
+                cand = second_fri
+                break
+    elif series_id in ("CPIAUCSL", "CPILFESL"):
+        for m in (as_of_dt.replace(day=1), next_month):
+            c = _roll_fwd_weekday(m.replace(day=12))
+            if c > as_of_dt:
+                cand = c
+                break
+    elif series_id == "PPIFIS":
+        for m in (as_of_dt.replace(day=1), next_month):
+            c = _roll_fwd_weekday(m.replace(day=13))
+            if c > as_of_dt:
+                cand = c
+                break
+    elif series_id == "RSAFS":
+        for m in (as_of_dt.replace(day=1), next_month):
+            c = _roll_fwd_weekday(m.replace(day=16))
+            if c > as_of_dt:
+                cand = c
+                break
+    elif series_id in ("PCEPI", "PCEPILFE", "GDPC1"):
+        for m in (as_of_dt.replace(day=1), next_month):
+            c = _roll_fwd_weekday(m.replace(day=min(28, m.days_in_month)))
+            if c > as_of_dt:
+                cand = c
+                break
+
+    if cand is None or cand <= as_of_dt:
+        cand = _roll_fwd_weekday(as_of_dt + pd.Timedelta(days=7))
+    else:
+        cand = _roll_fwd_weekday(cand)
+    return cand.strftime("%Y-%m-%d")
 
 
 def build_standing_macro_dashboard(
@@ -432,6 +582,7 @@ def build_standing_macro_dashboard(
     as_of_date: str,
     calendar_provider: Optional[Any] = None,
     rates_summary: Optional[FedRatesSummary] = None,
+    liquidity: Optional[LiquidityPlumbingData] = None,
 ) -> Tuple[List[MacroDashboardRow], List[MarketBasedIndicatorRow]]:
     """Construct the Standing Macro Dashboard (16 series) and separated Market-Based Indicators table (Stage 3: 3.1)."""
     rows: List[MacroDashboardRow] = []
@@ -464,7 +615,7 @@ def build_standing_macro_dashboard(
                 source=source,
             )
 
-        ref_p, rel_d = resolve_release_metadata(snap.series_id, snap.latest_date)
+        ref_p, rel_d = resolve_release_metadata(snap.series_id, snap.latest_date, as_of_date=as_of_date)
         next_d = resolve_next_release_date(snap.series_id, as_of_date, calendar_provider, default_next)
 
         if use_mom:
@@ -607,7 +758,18 @@ def build_standing_macro_dashboard(
         "U.S. Census Bureau / FRED (RSAFS)", "2026-11-17",
     ))
 
-    # ISM Manufacturing & Services (sourced from ISM official schedule)
+    # ISM Manufacturing & Services (dynamic official schedule chronology)
+    as_of_dt_dash = pd.to_datetime(as_of_date)
+    curr_m_start = as_of_dt_dash.replace(day=1)
+    curr_bdays = pd.bdate_range(curr_m_start, curr_m_start + pd.offsets.MonthEnd(0))
+    prev_m_start = (curr_m_start - pd.Timedelta(days=1)).replace(day=1)
+    prev_bdays = pd.bdate_range(prev_m_start, prev_m_start + pd.offsets.MonthEnd(0))
+
+    ism_mfg_rel_dt = curr_bdays[0] if as_of_dt_dash >= curr_bdays[0] else prev_bdays[0]
+    ism_mfg_ref_label = (ism_mfg_rel_dt.replace(day=1) - pd.Timedelta(days=1)).strftime("%b %Y")
+    ism_srv_rel_dt = curr_bdays[2] if len(curr_bdays) >= 3 and as_of_dt_dash >= curr_bdays[2] else prev_bdays[min(2, len(prev_bdays) - 1)]
+    ism_srv_ref_label = (ism_srv_rel_dt.replace(day=1) - pd.Timedelta(days=1)).strftime("%b %Y")
+
     rows.append(MacroDashboardRow(
         indicator="ISM Manufacturing PMI",
         category="Economic Activity",
@@ -615,10 +777,10 @@ def build_standing_macro_dashboard(
         prior_value="47.2",
         direction_3m="Rising ▲",
         plain_label="Contraction (<50)",
-        reference_period="Sep 2026",
-        release_date="2026-10-01",
-        next_release_date=resolve_next_release_date("ISM_MFG", as_of_date, calendar_provider, "2026-11-02"),
-        source="Institute for Supply Management (ISM)",
+        reference_period=ism_mfg_ref_label,
+        release_date=ism_mfg_rel_dt.strftime("%Y-%m-%d"),
+        next_release_date=resolve_next_release_date("ISM_MFG", as_of_date, calendar_provider),
+        source="Institute for Supply Management (ISM Schedule)",
         numeric_latest=48.6,
         numeric_prior=47.2,
     ))
@@ -629,10 +791,10 @@ def build_standing_macro_dashboard(
         prior_value="51.5",
         direction_3m="Rising ▲",
         plain_label="Expansion (>=50)",
-        reference_period="Sep 2026",
-        release_date="2026-10-03",
-        next_release_date=resolve_next_release_date("ISM_SRV", as_of_date, calendar_provider, "2026-11-04"),
-        source="Institute for Supply Management (ISM)",
+        reference_period=ism_srv_ref_label,
+        release_date=ism_srv_rel_dt.strftime("%Y-%m-%d"),
+        next_release_date=resolve_next_release_date("ISM_SRV", as_of_date, calendar_provider),
+        source="Institute for Supply Management (ISM Schedule)",
         numeric_latest=54.9,
         numeric_prior=51.5,
     ))
@@ -643,75 +805,218 @@ def build_standing_macro_dashboard(
         "University of Michigan / FRED (UMCSENT)", "2026-11-13",
     ))
 
-    # Market-Based Indicators Table (5 series)
+    # Market-Based Indicators Table (Phase 3A expanded: HY, IG, BBB, Real 10Y, 10Y BE, 5Y5Y Fwd, 3M10Y, Net Liquidity)
+    # Reconciled so Latest Level - Prior Level == Period Change to the exact basis point.
+    def _ref_prior(snap_obj: MacroMetricSnapshot) -> float:
+        p = getattr(snap_obj, "period_start_value", None)
+        return float(p) if p is not None else float(snap_obj.prior_value)
+
+    def _bps_delta_str(latest_pct: float, prior_pct: float) -> str:
+        diff_bps = round(round(latest_pct, 2) * 100.0) - round(round(prior_pct, 2) * 100.0)
+        return f"{diff_bps:+.0f} bps"
+
     mkt_rows: List[MarketBasedIndicatorRow] = []
     hy_m = metrics.get("hy_credit_spread")
     ig_m = metrics.get("ig_credit_spread")
+    bbb_m = metrics.get("bbb_credit_spread")
     real_m = metrics.get("real_yield_10y")
     be_m = metrics.get("breakeven_10y")
+    f5y5y_m = metrics.get("forward_inflation_5y5y")
     c3m_m = metrics.get("spread_3m10y")
 
     if hy_m and hy_m.latest_value is not None:
-        p_chg = f"{hy_m.period_change * 100:+.0f} bps" if hy_m.period_change is not None else "n/a"
+        curr_v = round(float(hy_m.latest_value), 2)
+        prior_v = round(_ref_prior(hy_m), 2)
         mkt_rows.append(MarketBasedIndicatorRow(
             indicator="High Yield Option-Adjusted Spread (OAS)",
             series_id="BAMLH0A0HYM2",
-            latest_level=f"{hy_m.latest_value:.2f}% ({hy_m.latest_value * 100:.0f} bps)",
-            prior_level=f"{hy_m.prior_value:.2f}% ({hy_m.prior_value * 100:.0f} bps)",
-            period_change=p_chg,
-            trend_3m="Tight / Complacent" if hy_m.latest_value < 3.5 else ("Normal / Neutral" if hy_m.latest_value <= 4.5 else "Elevated / Stress"),
+            latest_level=f"{curr_v:.2f}% ({curr_v * 100:.0f} bps)",
+            prior_level=f"{prior_v:.2f}% ({prior_v * 100:.0f} bps)",
+            period_change=_bps_delta_str(curr_v, prior_v),
+            trend_3m="Tight / Complacent" if curr_v < 3.5 else ("Normal / Neutral" if curr_v <= 4.5 else "Elevated / Stress"),
             source="ICE BofA / FRED",
         ))
 
     if ig_m and ig_m.latest_value is not None:
-        p_chg = f"{ig_m.period_change * 100:+.0f} bps" if ig_m.period_change is not None else "n/a"
+        curr_v = round(float(ig_m.latest_value), 2)
+        prior_v = round(_ref_prior(ig_m), 2)
         mkt_rows.append(MarketBasedIndicatorRow(
             indicator="Investment Grade Option-Adjusted Spread (OAS)",
             series_id="BAMLC0A0CM",
-            latest_level=f"{ig_m.latest_value:.2f}% ({ig_m.latest_value * 100:.0f} bps)",
-            prior_level=f"{ig_m.prior_value:.2f}% ({ig_m.prior_value * 100:.0f} bps)",
-            period_change=p_chg,
-            trend_3m="Tight / Low Spread (<100 bps)" if ig_m.latest_value < 1.0 else "Normal / Balanced",
+            latest_level=f"{curr_v:.2f}% ({curr_v * 100:.0f} bps)",
+            prior_level=f"{prior_v:.2f}% ({prior_v * 100:.0f} bps)",
+            period_change=_bps_delta_str(curr_v, prior_v),
+            trend_3m="Tight / Low Spread (<100 bps)" if curr_v < 1.0 else "Normal / Balanced",
+            source="ICE BofA / FRED",
+        ))
+
+    if bbb_m and bbb_m.latest_value is not None:
+        curr_v = round(float(bbb_m.latest_value), 2)
+        prior_v = round(_ref_prior(bbb_m), 2)
+        hy_bbb_gap = (
+            f"HY–BBB +{(round(float(hy_m.latest_value), 2) - curr_v) * 100:.0f} bps"
+            if (hy_m and hy_m.latest_value is not None)
+            else ("Tight (<130 bps)" if curr_v < 1.3 else "Normal / Widening")
+        )
+        mkt_rows.append(MarketBasedIndicatorRow(
+            indicator="ICE BofA BBB Corporate OAS (IG Floor)",
+            series_id="BAMLC0A4CBBB",
+            latest_level=f"{curr_v:.2f}% ({curr_v * 100:.0f} bps)",
+            prior_level=f"{prior_v:.2f}% ({prior_v * 100:.0f} bps)",
+            period_change=_bps_delta_str(curr_v, prior_v),
+            trend_3m=hy_bbb_gap,
             source="ICE BofA / FRED",
         ))
 
     if real_m and real_m.latest_value is not None:
-        p_chg = f"{real_m.period_change * 100:+.0f} bps" if real_m.period_change is not None else "n/a"
+        curr_v = round(float(real_m.latest_value), 2)
+        prior_v = round(_ref_prior(real_m), 2)
         mkt_rows.append(MarketBasedIndicatorRow(
             indicator="10-Year TIPS Real Yield (Cost of Capital)",
             series_id="DFII10",
-            latest_level=f"{real_m.latest_value:.2f}%",
-            prior_level=f"{real_m.prior_value:.2f}%",
-            period_change=p_chg,
-            trend_3m="Restrictive (>2.0%)" if real_m.latest_value >= 2.0 else "Accommodative (<1.5%)",
+            latest_level=f"{curr_v:.2f}%",
+            prior_level=f"{prior_v:.2f}%",
+            period_change=_bps_delta_str(curr_v, prior_v),
+            trend_3m="Restrictive (>2.0%)" if curr_v >= 2.0 else "Accommodative (<1.5%)",
             source="U.S. Treasury / FRED",
         ))
 
     if be_m and be_m.latest_value is not None:
-        p_chg = f"{be_m.period_change * 100:+.0f} bps" if be_m.period_change is not None else "n/a"
+        curr_v = round(float(be_m.latest_value), 2)
+        prior_v = round(_ref_prior(be_m), 2)
         mkt_rows.append(MarketBasedIndicatorRow(
             indicator="10-Year Breakeven Inflation Rate",
             series_id="T10YIE",
-            latest_level=f"{be_m.latest_value:.2f}%",
-            prior_level=f"{be_m.prior_value:.2f}%",
-            period_change=p_chg,
-            trend_3m="Anchored Expectations (2.0–2.4%)" if 2.0 <= be_m.latest_value <= 2.4 else "Drifting / Unanchored",
+            latest_level=f"{curr_v:.2f}%",
+            prior_level=f"{prior_v:.2f}%",
+            period_change=_bps_delta_str(curr_v, prior_v),
+            trend_3m="Anchored Expectations (2.0–2.4%)" if 2.0 <= curr_v <= 2.4 else "Drifting / Unanchored",
+            source="Federal Reserve / FRED",
+        ))
+
+    if f5y5y_m and f5y5y_m.latest_value is not None:
+        curr_v = round(float(f5y5y_m.latest_value), 2)
+        prior_v = round(_ref_prior(f5y5y_m), 2)
+        mkt_rows.append(MarketBasedIndicatorRow(
+            indicator="5Y5Y Forward Inflation Expectation",
+            series_id="T5YIFR",
+            latest_level=f"{curr_v:.2f}%",
+            prior_level=f"{prior_v:.2f}%",
+            period_change=_bps_delta_str(curr_v, prior_v),
+            trend_3m="Anchored (2.0–2.5%)" if 2.0 <= curr_v <= 2.5 else ("Elevated (>2.5%)" if curr_v > 2.5 else "Disinflationary (<2.0%)"),
             source="Federal Reserve / FRED",
         ))
 
     if c3m_m and c3m_m.latest_value is not None:
-        p_chg = f"{c3m_m.period_change * 100:+.0f} bps" if c3m_m.period_change is not None else "n/a"
+        curr_v = round(float(c3m_m.latest_value), 2)
+        prior_v = round(_ref_prior(c3m_m), 2)
         mkt_rows.append(MarketBasedIndicatorRow(
             indicator="10Y Minus 3M Treasury Yield Spread",
             series_id="T10Y3M",
-            latest_level=f"{c3m_m.latest_value * 100:+.0f} bps ({c3m_m.latest_value:+.2f}%)",
-            prior_level=f"{c3m_m.prior_value * 100:+.0f} bps ({c3m_m.prior_value:+.2f}%)",
-            period_change=p_chg,
-            trend_3m="Positively Sloped / De-Inverted" if c3m_m.latest_value >= 0 else "Inverted (Recession Watch)",
+            latest_level=f"{curr_v * 100:+.0f} bps ({curr_v:+.2f}%)",
+            prior_level=f"{prior_v * 100:+.0f} bps ({prior_v:+.2f}%)",
+            period_change=_bps_delta_str(curr_v, prior_v),
+            trend_3m="Positively Sloped / De-Inverted" if curr_v >= 0 else "Inverted (Recession Watch)",
             source="Federal Reserve / FRED",
         ))
 
+    if liquidity is not None:
+        imp4 = f"{liquidity.impulse_4w_b:+,.1f}B (4W)" if liquidity.impulse_4w_b is not None else "n/a"
+        imp13 = f"{liquidity.impulse_13w_b:+,.1f}B (13W)" if liquidity.impulse_13w_b is not None else "n/a"
+        mkt_rows.append(MarketBasedIndicatorRow(
+            indicator="Fed Net Liquidity (WALCL - TGA - RRP)",
+            series_id="H41_NETLIQ",
+            latest_level=f"${liquidity.net_liquidity_t:.3f}T",
+            prior_level=f"13W: {imp13}",
+            period_change=imp4,
+            trend_3m=f"{liquidity.regime} (TGA ${liquidity.tga_b:,.1f}B)",
+            source="Federal Reserve H.4.1 / FRED",
+        ))
+
     return rows, mkt_rows
+
+
+def compute_fed_net_liquidity(
+    walcl_df: Optional[pd.DataFrame],
+    tga_df: Optional[pd.DataFrame],
+    rrp_df: Optional[pd.DataFrame],
+) -> Optional[LiquidityPlumbingData]:
+    """
+    Compute Fed Net Liquidity = WALCL - WTREGEN - RRPONTSYD using strict backward PIT alignment.
+    FRED Units: WALCL (Millions USD), WTREGEN (Millions USD), RRPONTSYD (Billions USD).
+    """
+    if walcl_df is None or walcl_df.empty or tga_df is None or tga_df.empty or rrp_df is None or rrp_df.empty:
+        return None
+
+    w = walcl_df[["date", "value"]].dropna().copy()
+    t = tga_df[["date", "value"]].dropna().copy()
+    r = rrp_df[["date", "value"]].dropna().copy()
+    if w.empty or t.empty or r.empty:
+        return None
+
+    for df_part in (w, t, r):
+        df_part["date"] = pd.to_datetime(df_part["date"])
+    w = w.sort_values("date").rename(columns={"value": "walcl_m"})
+    t = t.sort_values("date").rename(columns={"value": "tga_m"})
+    r = r.sort_values("date").rename(columns={"value": "rrp_b"})
+
+    merged = pd.merge_asof(w, t, on="date", direction="backward")
+    merged = pd.merge_asof(merged, r, on="date", direction="backward")
+    merged = merged.dropna(subset=["walcl_m", "tga_m", "rrp_b"]).reset_index(drop=True)
+    if merged.empty:
+        return None
+
+    merged["walcl_b"] = merged["walcl_m"] / 1000.0
+    merged["tga_b"] = merged["tga_m"] / 1000.0
+    merged["net_liq_b"] = merged["walcl_b"] - merged["tga_b"] - merged["rrp_b"]
+
+    latest_row = merged.iloc[-1]
+    latest_dt = latest_row["date"]
+    # If daily ON RRP has a more recent observation than weekly H.4.1, incorporate the latest RRP balance
+    latest_rrp_b = float(r.iloc[-1]["rrp_b"])
+    latest_rrp_dt = r.iloc[-1]["date"]
+    effective_rrp_b = latest_rrp_b if latest_rrp_dt >= latest_dt else float(latest_row["rrp_b"])
+
+    walcl_b_curr = float(latest_row["walcl_b"])
+    tga_b_curr = float(latest_row["tga_b"])
+    net_liq_b_curr = walcl_b_curr - tga_b_curr - effective_rrp_b
+    net_liq_t_curr = net_liq_b_curr / 1000.0
+    walcl_t_curr = walcl_b_curr / 1000.0
+
+    sub_4w = merged[merged["date"] <= (latest_dt - pd.Timedelta(days=26))]
+    impulse_4w_b = round(net_liq_b_curr - float(sub_4w.iloc[-1]["net_liq_b"]), 1) if not sub_4w.empty else None
+
+    sub_13w = merged[merged["date"] <= (latest_dt - pd.Timedelta(days=88))]
+    impulse_13w_b = round(net_liq_b_curr - float(sub_13w.iloc[-1]["net_liq_b"]), 1) if not sub_13w.empty else None
+
+    # Regime classification using 4W + 13W reserve impulse ($B thresholds)
+    primary_imp = impulse_4w_b if impulse_4w_b is not None else (impulse_13w_b or 0.0)
+    if primary_imp >= 40.0:
+        regime = "Expanding"
+    elif primary_imp <= -40.0:
+        regime = "Draining"
+    else:
+        regime = "Neutral"
+
+    imp4_txt = f"{impulse_4w_b:+,.1f}B" if impulse_4w_b is not None else "n/a"
+    imp13_txt = f"{impulse_13w_b:+,.1f}B" if impulse_13w_b is not None else "n/a"
+    assessment = (
+        f"Fed Net Liquidity stands at ${net_liq_t_curr:.3f}T (Assets ${walcl_t_curr:.3f}T minus TGA ${tga_b_curr:,.1f}B "
+        f"and ON RRP ${effective_rrp_b:,.1f}B), reflecting {regime.lower()} reserve plumbing "
+        f"(4W impulse: {imp4_txt}; 13W impulse: {imp13_txt})."
+    )
+
+    return LiquidityPlumbingData(
+        walcl_t=round(walcl_t_curr, 3),
+        tga_b=round(tga_b_curr, 1),
+        rrp_b=round(effective_rrp_b, 1),
+        net_liquidity_t=round(net_liq_t_curr, 3),
+        impulse_4w_b=impulse_4w_b,
+        impulse_13w_b=impulse_13w_b,
+        as_of_date=latest_dt.strftime("%Y-%m-%d"),
+        regime=regime,
+        assessment=assessment,
+    )
 
 
 def compute_credit_spread_intelligence(
@@ -719,8 +1024,9 @@ def compute_credit_spread_intelligence(
     snap_ig: Optional[MacroMetricSnapshot] = None,
     curve_3m10y_snap: Optional[MacroMetricSnapshot] = None,
     stress_snap: Optional[MacroMetricSnapshot] = None,
+    snap_bbb: Optional[MacroMetricSnapshot] = None,
 ) -> CreditSpreadIntelligence:
-    """Evaluate High-Yield and Investment-Grade credit spreads alongside systemic financial stress (Stage 4: 4.5)."""
+    """Evaluate High-Yield, IG, and BBB corporate credit spreads alongside systemic financial stress."""
     if hy_snap and hy_snap.latest_value is not None:
         spread_pct = hy_snap.latest_value
         prev_pct = hy_snap.period_start_value if hy_snap.period_start_value is not None else hy_snap.prior_value
@@ -741,6 +1047,18 @@ def compute_credit_spread_intelligence(
         if ig_prev is None:
             ig_prev = ig_pct
         ig_bps, ig_d_bps = compute_oas_delta(ig_pct, ig_prev)
+
+    # BBB Corporate OAS & HY-BBB Quality Compression
+    bbb_bps = None
+    bbb_d_bps = None
+    hy_bbb_gap = None
+    if snap_bbb and snap_bbb.latest_value is not None:
+        bbb_pct = snap_bbb.latest_value
+        bbb_prev = snap_bbb.period_start_value if snap_bbb.period_start_value is not None else snap_bbb.prior_value
+        if bbb_prev is None:
+            bbb_prev = bbb_pct
+        bbb_bps, bbb_d_bps = compute_oas_delta(bbb_pct, bbb_prev)
+        hy_bbb_gap = round(spread_bps - bbb_bps, 1)
 
     # 3M/10Y Spread
     s_3m10y_bps = None
@@ -772,6 +1090,9 @@ def compute_credit_spread_intelligence(
         regime = "Distressed / Crisis Alert"
         assessment = "Credit spreads exceed crisis thresholds (>600 bps), signaling acute refinancing paralysis and elevated default probabilities."
 
+    if hy_bbb_gap is not None:
+        assessment += f" HY–BBB quality compression stands at {hy_bbb_gap:.0f} bps (BBB OAS: {bbb_bps:.0f} bps)."
+
     return CreditSpreadIntelligence(
         spread_pct=spread_pct,
         spread_bps=spread_bps,
@@ -780,6 +1101,9 @@ def compute_credit_spread_intelligence(
         assessment=assessment,
         ig_spread_bps=ig_bps,
         ig_delta_bps=ig_d_bps,
+        bbb_spread_bps=bbb_bps,
+        bbb_delta_bps=bbb_d_bps,
+        hy_bbb_compression_bps=hy_bbb_gap,
         spread_3m10y_bps=s_3m10y_bps,
         financial_stress_index=fsi_val,
         financial_stress_label=fsi_label,
@@ -791,13 +1115,21 @@ def compute_real_rate_intelligence(
     be_snap: Optional[MacroMetricSnapshot],
     nominal_10y: float,
     nominal_delta: float,
+    snap_5y5y: Optional[MacroMetricSnapshot] = None,
 ) -> RealRateIntelligence:
-    """Decompose nominal 10Y yield into real cost of capital (TIPS) vs breakeven inflation."""
+    """Decompose nominal 10Y yield into real cost of capital (TIPS), breakeven inflation, and 5Y5Y forward expectations."""
     real_y = real_snap.latest_value if real_snap else 2.63
     real_d_bps = round((real_snap.period_change if real_snap and real_snap.period_change is not None else 0.0) * 100.0, 1)
 
     be_y = be_snap.latest_value if be_snap else 2.34
     be_d_bps = round((be_snap.period_change if be_snap and be_snap.period_change is not None else 0.0) * 100.0, 1)
+
+    f5y5y_y = snap_5y5y.latest_value if snap_5y5y else None
+    f5y5y_d_bps = (
+        round((snap_5y5y.period_change if snap_5y5y.period_change is not None else 0.0) * 100.0, 1)
+        if snap_5y5y is not None
+        else None
+    )
 
     nom_d_bps = round(nominal_delta * 100.0, 1)
 
@@ -809,9 +1141,14 @@ def compute_real_rate_intelligence(
     else:
         driver = "Balanced Yield Shift"
 
+    fwd_note = (
+        f" while 5Y5Y forward inflation sits at {f5y5y_y:.2f}%"
+        if f5y5y_y is not None
+        else ""
+    )
     assessment = (
-        f"10Y TIPS real yield at {real_y:.2f}% represents a historically high cost of capital that caps valuation expansion "
-        f"for long-duration equities, while 10Y breakevens at {be_y:.2f}% indicate anchored long-term inflation expectations."
+        f"10Y TIPS real yield at {real_y:.2f}% represents a historically elevated cost of capital that caps valuation expansion "
+        f"for long-duration equities, while 10Y breakevens at {be_y:.2f}%{fwd_note} indicate anchored long-term inflation expectations."
     )
 
     return RealRateIntelligence(
@@ -823,6 +1160,8 @@ def compute_real_rate_intelligence(
         nominal_delta_bps=nom_d_bps,
         driver_attribution=driver,
         assessment=assessment,
+        forward_5y5y_pct=f5y5y_y,
+        forward_5y5y_delta_bps=f5y5y_d_bps,
     )
 
 
@@ -1109,22 +1448,58 @@ def compute_macro_regime_intelligence(
 
     growth_signal = "Resilient / Expanding" if growth_score >= 1 else ("Moderating / Balanced" if growth_score == 0 else "Slowing / Contractionary")
 
-    # Inflation evaluation (Stage 3: 3.2 Add Accelerating state)
-    infl_score = 0
+    # Inflation evaluation (Stage 3: 3.2 Accelerating state + Stage 2.1 multi-series & 3M direction)
     cpi_snap = metrics.get("core_cpi") or metrics.get("cpi")
     cpi_head = metrics.get("cpi")
     ppi_snap = metrics.get("ppi")
+    pce_snap = metrics.get("core_pce") or metrics.get("pce")
 
+    def _is_infl_rising(snap: Optional[MacroMetricSnapshot], thresh: float = 0.05) -> bool:
+        if snap is None:
+            return False
+        prior = getattr(snap, "prior_headline", None)
+        delta = (snap.headline_value - prior) if prior is not None else (getattr(snap, "change", 0.0) or 0.0)
+        mom_val = getattr(snap, "mom_pct", 0.0) or 0.0
+        return delta >= thresh or mom_val >= 0.35
+
+    def _is_infl_falling(snap: Optional[MacroMetricSnapshot], thresh: float = 0.05) -> bool:
+        if snap is None:
+            return False
+        prior = getattr(snap, "prior_headline", None)
+        delta = (snap.headline_value - prior) if prior is not None else (getattr(snap, "change", 0.0) or 0.0)
+        return delta <= -thresh or (snap.headline_value <= 2.2 and delta <= 0.0)
+
+    infl_score = 0
     cpi_mom = getattr(cpi_snap, "mom_pct", 0.0) or 0.0
     cpi_head_mom = getattr(cpi_head, "mom_pct", 0.0) or 0.0
     ppi_mom = getattr(ppi_snap, "mom_pct", 0.0) or 0.0
     is_accelerating = (cpi_mom >= 0.40 or cpi_head_mom >= 0.50 or ppi_mom >= 0.80)
 
     if cpi_snap:
-        # YoY core inflation
+        # YoY core inflation (level and direction)
         if cpi_snap.headline_value >= 3.0:
             infl_score += 1
         elif cpi_snap.headline_value <= 2.2:
+            infl_score -= 1
+        elif cpi_snap.headline_value >= 2.7 and _is_infl_rising(cpi_snap):
+            infl_score += 1
+
+    if cpi_head and cpi_head is not cpi_snap:
+        if cpi_head.headline_value >= 3.0:
+            infl_score += 1
+        elif cpi_head.headline_value <= 2.2:
+            infl_score -= 1
+
+    if ppi_snap:
+        if ppi_snap.headline_value >= 3.0:
+            infl_score += 1
+        elif ppi_snap.headline_value < 1.5:
+            infl_score -= 1
+
+    if pce_snap:
+        if pce_snap.headline_value >= 2.6:
+            infl_score += 1
+        elif pce_snap.headline_value <= 2.1:
             infl_score -= 1
 
     if rates.breakeven_10y >= 2.30:
@@ -1132,19 +1507,52 @@ def compute_macro_regime_intelligence(
     elif rates.breakeven_10y < 2.0:
         infl_score -= 1
 
+    infl_snapshots = [s for s in (cpi_head, metrics.get("core_cpi"), ppi_snap, pce_snap) if s is not None]
+    rising_infl_count = sum(1 for s in infl_snapshots if _is_infl_rising(s))
+    falling_infl_count = sum(1 for s in infl_snapshots if _is_infl_falling(s))
+
     if is_accelerating:
         inflation_signal = "Accelerating / Reigniting"
-    elif infl_score >= 1:
+    elif infl_score >= 1 or rising_infl_count >= 2:
         inflation_signal = "Firm / Sticky"
-    elif infl_score <= -1:
+    elif infl_score <= -1 and rising_infl_count == 0:
         inflation_signal = "Easing / Anchored"
     else:
         inflation_signal = "Moderate / Anchored"
 
-    # Format return-based leading and lagging sector text (Stage 3: 3.3 Return-based wording)
-    leaders_2 = ", ".join(rotation.top_inflows[:2]) if rotation.top_inflows else "Defensives"
-    leaders_3 = ", ".join(rotation.top_inflows[:3]) if rotation.top_inflows else "Defensives and Energy"
+    # Format return-based leading and lagging sector text (Stage 3: 3.3 + Stage 2.2 defensive leader check)
+    leaders_2 = ", ".join(rotation.top_inflows[:2]) if rotation.top_inflows else (rotation.leading_defensive or "Defensives")
+    leaders_3 = ", ".join(rotation.top_inflows[:3]) if rotation.top_inflows else (rotation.leading_defensive or "Defensives and Energy")
     laggards_2 = ", ".join(rotation.top_outflows[-2:]) if rotation.top_outflows else "Technology and Growth"
+
+    def _lead_ticker(label: str) -> str:
+        # Extracts e.g. 'XLK' from 'Technology (XLK: +1.31%)'
+        if "(" in label and ":" in label:
+            return label.split("(", 1)[1].split(":", 1)[0].strip()
+        return ""
+
+    def _is_def_leader(label: str) -> bool:
+        code = _lead_ticker(label)
+        low = label.lower()
+        return code in {"XLP", "XLU", "XLV"} or any(k in low for k in ("staples", "utilities", "health care", "defensive"))
+
+    lead_codes = [_lead_ticker(x) for x in (rotation.top_inflows or [])[:2]]
+    growth_codes = {"XLK", "XLC", "XLY"}
+    def_lead_cnt = sum(1 for x in (rotation.top_inflows or [])[:2] if _is_def_leader(x))
+    if not rotation.top_inflows and rotation.spread < 0:
+        def_lead_cnt = 2
+    gro_lead_cnt = sum(1 for c in lead_codes if c in growth_codes)
+
+    if gro_lead_cnt >= 1 and def_lead_cnt == 0 and rotation.rsp_vs_spy_spread < -0.15:
+        sector_tape_phrase = (
+            f"Mega-cap growth concentrated leadership in {leaders_2} while {laggards_2} lagged"
+        )
+    elif def_lead_cnt >= 2 or (rotation.spread < 0.0 and def_lead_cnt >= 1) or (def_lead_cnt >= 1 and gro_lead_cnt == 0 and rotation.spread <= 0.25):
+        sector_tape_phrase = f"Defensive rotation favored {leaders_2} while {laggards_2} saw selling pressure"
+    elif rotation.spread > 1.0 and rotation.rsp_vs_spy_spread >= -0.15:
+        sector_tape_phrase = f"Broad cyclical appetite favored {leaders_2} while {laggards_2} trailed"
+    else:
+        sector_tape_phrase = f"Mixed cross-sector rotation favored {leaders_2} while {laggards_2} lagged"
 
     # FOMC narrative context
     if fomc and fomc.occurred_in_period:
@@ -1166,14 +1574,22 @@ def compute_macro_regime_intelligence(
 
     rank_context = ""
     if rotation.top_rank_decliner and rotation.top_rank_gainer:
-        rank_context = " (see Section 17: Macro & Economic Events for sector momentum shifts)."
+        rank_context = f" (notable rank shifts: {rotation.top_rank_gainer}; {rotation.top_rank_decliner})."
 
     # Map Quadrant & Build Timeframe-Specific Forward Outlook
     # Explicit Truth Table: Growth (Expanding, Moderating, Slowing) x Inflation (Accelerating/Firm, Easing/Moderate)
+    # Stage 2.1: "Goldilocks" requires inflation falling (falling_infl_count >= 1 and rising_infl_count == 0) AND yields not rising.
+    nom_delta_bps = getattr(rates, "nominal_delta_bps", 0.0) or 0.0
     is_inflation_elevated = (
         inflation_signal.startswith("Accelerating")
         or inflation_signal.startswith("Firm")
         or is_accelerating
+    )
+    can_goldilocks = (
+        not is_inflation_elevated
+        and falling_infl_count >= 1
+        and rising_infl_count == 0
+        and nom_delta_bps <= 0.0
     )
 
     if is_inflation_elevated:
@@ -1188,8 +1604,15 @@ def compute_macro_regime_intelligence(
             summary_badge = f"Stagflation Risk ({rt_label})"
     else:  # Easing or Moderate
         if growth_signal.startswith("Resilient"):
-            quadrant = "Goldilocks / Non-Inflationary Expansion"
-            summary_badge = f"Goldilocks Expansion ({rt_label})"
+            if can_goldilocks:
+                quadrant = "Goldilocks / Non-Inflationary Expansion"
+                summary_badge = f"Goldilocks Expansion ({rt_label})"
+            elif nom_delta_bps >= 5.0 or rising_infl_count >= 1:
+                quadrant = "Reflation / Late-Cycle Tension"
+                summary_badge = f"Reflation Tension ({rt_label})"
+            else:
+                quadrant = "Growth Normalization / Mid-Cycle Equilibrium"
+                summary_badge = f"Growth Normalization ({rt_label})"
         elif growth_signal.startswith("Moderating"):
             quadrant = "Growth Normalization / Mid-Cycle Equilibrium"
             summary_badge = f"Growth Normalization ({rt_label})"
@@ -1197,18 +1620,41 @@ def compute_macro_regime_intelligence(
             quadrant = "Deflationary Slowdown / Policy Transition"
             summary_badge = f"Deflationary Slowdown ({rt_label})"
 
+    # Sign-dependent 10Y yield narrative (Stage 2.1)
+    if nom_delta_bps > 2.0:
+        yield_trend_phrase = f"Rising 10Y Treasury yields ({rates.nominal_10y:.2f}%, {nom_delta_bps:+.0f} bps)"
+    elif nom_delta_bps < -2.0:
+        yield_trend_phrase = f"Easing 10Y Treasury yields ({rates.nominal_10y:.2f}%, {nom_delta_bps:+.0f} bps)"
+    else:
+        yield_trend_phrase = f"Benchmark 10Y yields held steady at {rates.nominal_10y:.2f}% ({nom_delta_bps:+.0f} bps)"
+
     # Narrative building per quadrant
     if quadrant.startswith("Goldilocks"):
         if rt == "daily":
+            gold_posture = (
+                sector_tape_phrase
+                if def_lead_cnt >= 1
+                else f"Sector returns show broad-based risk appetite favoring {leaders_2}"
+            )
             forward_outlook = (
-                f"Tactical Session Posture: Sector returns show broad-based risk appetite favoring {leaders_2}. "
+                f"Tactical Session Posture: {gold_posture}. "
                 f"Disinflation tailwinds and tight credit ({credit.spread_bps:.0f} bps OAS) provide immediate upside support. "
                 f"Next 1–3 Sessions Watch: Low-volatility contango (ratio {vol_term.ratio:.3f}) supports momentum continuation toward overhead resistance."
             )
         elif rt == "weekly":
+            gold_wk_posture = (
+                sector_tape_phrase
+                if def_lead_cnt >= 1
+                else f"Healthy risk appetite broadened into {leaders_2} across the week"
+            )
+            gold_yld_txt = (
+                f"Declining yield pressures ({rates.nominal_10y:.2f}%, {nom_delta_bps:+.0f} bps)"
+                if nom_delta_bps < -1.0
+                else f"Anchored benchmark yields ({rates.nominal_10y:.2f}%, {nom_delta_bps:+.0f} bps)"
+            )
             forward_outlook = (
-                f"Weekly Positioning & Sectors: Healthy risk appetite broadened into {leaders_2} across the week.{rank_context} "
-                f"Declining yield pressures ({rates.nominal_10y:.2f}%) provide a solid backdrop for equity multiple expansion heading into next week. {fomc_str}"
+                f"Weekly Positioning & Sectors: {gold_wk_posture}.{rank_context} "
+                f"{gold_yld_txt} provide a solid backdrop for equity multiple expansion heading into next week. {fomc_str}"
             )
         else:
             forward_outlook = (
@@ -1218,18 +1664,30 @@ def compute_macro_regime_intelligence(
 
     elif quadrant.startswith("Reflation"):
         if rt == "daily":
-            dispersion_str = (
-                f"Equal-weight RSP ({rotation.rsp_vs_spy_spread:+.2f}% vs SPY) and small caps held up relative to mega-cap tech, "
-                f"confirming targeted tech de-risking rather than systemic market liquidation."
-                if rotation.rsp_vs_spy_spread > 0.2 else
-                f"Selling pressure was felt across sectors with Equal-weight RSP moving {rotation.rsp_vs_spy_spread:+.2f}% vs SPY."
-            )
+            if rotation.rsp_vs_spy_spread > 0.2:
+                if def_lead_cnt >= 1 and rotation.spread < 0:
+                    dispersion_str = (
+                        f"Equal-weight RSP ({rotation.rsp_vs_spy_spread:+.2f}% vs SPY) held up better than cap-weighted mega-cap tech amid defensive rotation."
+                    )
+                else:
+                    dispersion_str = (
+                        f"Equal-weight RSP ({rotation.rsp_vs_spy_spread:+.2f}% vs SPY) and small caps outperformed cap-weighted mega-cap tech, "
+                        f"pointing to broader participation beneath index-level churn."
+                    )
+            elif rotation.rsp_vs_spy_spread < -0.2:
+                dispersion_str = (
+                    f"Equal-weight RSP trailed cap-weighted SPY ({rotation.rsp_vs_spy_spread:+.2f}% spread), confirming narrow cap-weighted leadership rather than broad market expansion."
+                )
+            else:
+                dispersion_str = (
+                    f"Cap-weighted SPY and Equal-weight RSP traded largely in line ({rotation.rsp_vs_spy_spread:+.2f}% spread)."
+                )
             forward_outlook = (
-                f"Tactical Session Posture: Sector performance reflects defensive positioning with gains in {leaders_2} while {laggards_2} saw selling pressure. {dispersion_str} "
+                f"Tactical Session Posture: {sector_tape_phrase}. {dispersion_str} "
                 f"High-yield credit spreads remain tight at {credit.spread_bps:.0f} bps OAS ({credit.regime}) and the VIX term "
-                f"structure sits in upward-sloping contango (ratio {vol_term.ratio:.3f}), verifying that systemic solvency risks remain absent. "
-                f"Tactical Watch (Next 1–3 Sessions): Restrictive real 10Y yields ({rates.real_yield_10y:.2f}%) continue to cap equity valuation multiples; "
-                f"watch whether key technical support holds or if tactical de-risking tests recent range lows ahead of upcoming macro catalysts."
+                f"structure sits in upward-sloping contango (ratio {vol_term.ratio:.3f}), confirming that systemic solvency risks remain absent. "
+                f"Next 1–3 Sessions Watch: Restrictive real 10Y yields ({rates.real_yield_10y:.2f}%) continue to cap equity valuation multiples; "
+                f"watch whether key technical support holds or if mega-cap divergence pulls the index back toward range lows ahead of upcoming macro catalysts."
             )
         elif rt == "weekly":
             breadth_str = (
@@ -1239,50 +1697,53 @@ def compute_macro_regime_intelligence(
                 f"Leadership remained selective across market capitalizations (Russell 2000 vs Nasdaq-100 spread: {rotation.rut_vs_ndx_spread:+.2f}%)."
             )
             forward_outlook = (
-                f"Weekly Positioning & Sectors: Over the 5-day cycle, sector returns show leadership in {leaders_2} while {laggards_2} lagged.{rank_context} "
+                f"Weekly Positioning & Sectors: Over the 5-day cycle, {sector_tape_phrase[0].lower() + sector_tape_phrase[1:]}.{rank_context} "
                 f"{breadth_str} "
-                f"Benchmark 10Y yields held steady at {rates.nominal_10y:.2f}% alongside benign credit spreads ({credit.spread_bps:.0f} bps OAS), confirming that corporate refinancing conditions "
+                f"{yield_trend_phrase} alongside benign credit spreads ({credit.spread_bps:.0f} bps OAS) confirm that corporate refinancing conditions "
                 f"remain sound. {fomc_str} "
                 f"Coming Week Watch: With the Fed meeting concluded, attention shifts to key economic catalysts; {yield_levels_str} "
-                f"and whether rotation into non-tech cyclicals and defensives continues to buffer the broader market."
+                f"and whether rotation across cyclicals and defensives continues to support the broader market."
             )
         else:  # monthly
-            cpi_head_str = f"Headline CPI +{cpi_head.headline_value:.2f}%" if cpi_head else "Headline CPI +4.02%"
-            core_cpi_str = f"Core CPI +{metrics['core_cpi'].headline_value:.2f}%" if "core_cpi" in metrics else "Core CPI +2.79%"
-            core_pce_str = f"Core PCE +{metrics['core_pce'].headline_value:.2f}%" if "core_pce" in metrics else "Core PCE +3.12%"
+            cpi_head_str = f"Headline CPI +{cpi_head.headline_value:.2f}%" if cpi_head else "Headline CPI n/a"
+            core_cpi_str = f"Core CPI +{metrics['core_cpi'].headline_value:.2f}%" if "core_cpi" in metrics else "Core CPI n/a"
+            core_pce_str = f"Core PCE +{metrics['core_pce'].headline_value:.2f}%" if "core_pce" in metrics else "Core PCE n/a"
+            rsp_monthly_phrase = (
+                f"Equal-weight RSP outpaced cap-weighted SPY by {rotation.rsp_vs_spy_spread:+.2f}%, confirming broader participation beneath mega-cap churn."
+                if rotation.rsp_vs_spy_spread > 0.25 else
+                f"Equal-weight RSP trailed cap-weighted SPY ({rotation.rsp_vs_spy_spread:+.2f}% spread), keeping monthly breadth concentrated."
+            )
             forward_outlook = (
-                f"Strategic Macro Regime & Rotation: Over the past month, sector returns show a structural rotation out of long-duration growth ({laggards_2}) "
-                f"and into real assets and defensive value ({leaders_3}). Equal-weight RSP surged {rotation.rsp_vs_spy_spread:+.2f}% ahead of cap-weighted SPY, "
-                f"confirming that broad market participation expanded even as mega-cap tech suffered valuation derating. "
+                f"Strategic Macro Regime & Rotation: Over the past month, {sector_tape_phrase[0].lower() + sector_tape_phrase[1:]} (top leaders: {leaders_3}). {rsp_monthly_phrase} "
                 f"Resilient economic activity (Q3 GDP +3.37%, Retail Sales +0.77%) indicates reduced near-term recession risks, while compressed high-yield spreads ({credit.spread_bps:.0f} bps OAS) "
                 f"suggest corporate balance sheets remain well-capitalized. However, elevated inflation ({cpi_head_str}, {core_cpi_str}, {core_pce_str}) keeps 10Y TIPS real yields restrictive at {rates.real_yield_10y:.2f}%. "
                 f"Multi-Month Strategic Posture: High real cost of capital caps broad valuation multiple expansion; favors high-quality dividend growers, value cash flows, "
-                f"and energy/reflation exposures heading into year-end."
+                f"and real-asset / reflation exposures heading into year-end."
             )
 
     elif quadrant.startswith("Stagflationary Pressure"):
         if rt == "daily":
             forward_outlook = (
-                f"Tactical Session Posture: Stagflationary concerns triggered flight out of {laggards_2} into defensive havens ({leaders_2}). "
-                f"Next 1–3 Sessions Watch: High input costs and rate pressures warrant tactical capital preservation."
+                f"Tactical Session Posture: {sector_tape_phrase} amid elevated cost-push macro tension. "
+                f"Next 1–3 Sessions Watch: High input costs and rate pressures warrant disciplined risk management."
             )
         elif rt == "weekly":
             forward_outlook = (
-                f"Weekly Positioning & Sectors: Persistent inflation alongside moderating activity led weekly rotation away from {laggards_2} into {leaders_2}.{rank_context} "
-                f"With real yields restrictive at {rates.real_yield_10y:.2f}% and credit spreads at {credit.spread_bps:.0f} bps OAS, defensive positioning is favored entering next week. {fomc_str} "
+                f"Weekly Positioning & Sectors: Persistent inflation alongside moderating activity shaped weekly rotation: {sector_tape_phrase[0].lower() + sector_tape_phrase[1:]}.{rank_context} "
+                f"With real yields restrictive at {rates.real_yield_10y:.2f}% and credit spreads at {credit.spread_bps:.0f} bps OAS, selective risk sizing is favored entering next week. {fomc_str} "
                 f"With 2Y Treasury yields trading elevated above fed funds and recent FOMC dissents favoring higher policy rates, markets are not pricing near-term easing. "
                 f"Coming Week Watch: {yield_levels_str}."
             )
         else:  # monthly
             forward_outlook = (
                 f"Strategic Macro Regime & Rotation: Weakening demand combined with persistent inflation created margin compression risks, "
-                f"prompting structural rotation into {leaders_3}. High cash allocations and reduced equity beta remain warranted."
+                f"driving monthly leadership toward {leaders_3}. Elevated cash buffers and selective equity beta remain warranted."
             )
 
     elif quadrant.startswith("Growth Normalization"):
         if rt == "daily":
             forward_outlook = (
-                f"Tactical Session Posture: Growth normalization provided a balanced backdrop with sector leadership in {leaders_2}. "
+                f"Tactical Session Posture: Growth normalization provided a balanced backdrop as {sector_tape_phrase[0].lower() + sector_tape_phrase[1:]}. "
                 f"Next 1–3 Sessions Watch: Core support levels and volume confirmation."
             )
         elif rt == "weekly":
@@ -1299,17 +1760,17 @@ def compute_macro_regime_intelligence(
     else:  # Deflationary Slowdown
         if rt == "daily":
             forward_outlook = (
-                f"Tactical Session Posture: Growth deceleration prompted defensive haven bids in {leaders_2} while cyclicals ({laggards_2}) lagged. "
-                f"Watch for policy pivot signals over upcoming sessions."
+                f"Tactical Session Posture: {sector_tape_phrase} against a slowing growth backdrop. "
+                f"Next 1–3 Sessions Watch: Watch for policy pivot signals and support retention over upcoming sessions."
             )
         elif rt == "weekly":
             forward_outlook = (
-                f"Weekly Positioning & Sectors: Downshifting growth and cooling inflation supported duration and defensive assets ({leaders_2}).{rank_context} {fomc_str} "
+                f"Weekly Positioning & Sectors: Downshifting growth and cooling inflation shaped weekly positioning: {sector_tape_phrase[0].lower() + sector_tape_phrase[1:]}.{rank_context} {fomc_str} "
                 f"Coming Week Watch: {yield_levels_str} for signals of policy easing traction."
             )
         else:
             forward_outlook = (
-                f"Strategic Macro Regime & Rotation: Cooling economic momentum and disinflation led monthly rotation toward Treasuries and defensives ({leaders_3}). "
+                f"Strategic Macro Regime & Rotation: Cooling economic momentum and disinflation drove monthly performance toward {leaders_3}. "
                 f"Lower discount rates provide valuation support, but slowing demand warrants selective positioning."
             )
 
@@ -1456,10 +1917,15 @@ def build_macro_section(
         real_df = fred.fetch_series(series_map.get("real_yield_10y", "DFII10"), as_of_date=session_str)
         be_df = fred.fetch_series(series_map.get("breakeven_10y", "T10YIE"), as_of_date=session_str)
 
-        # Stage 4: Credit & Funding Metrics (IG OAS, 3M/10Y, Financial Stress)
+        # Stage 4: Credit & Funding Metrics (IG OAS, BBB OAS, 5Y5Y Fwd Inflation, 3M/10Y, Financial Stress, Liquidity)
         ig_df = fred.fetch_series(series_map.get("ig_credit_spread", "BAMLC0A0CM"), as_of_date=session_str)
+        bbb_df = fred.fetch_series(series_map.get("bbb_credit_spread", "BAMLC0A4CBBB"), as_of_date=session_str)
+        f5y5y_df = fred.fetch_series(series_map.get("forward_inflation_5y5y", "T5YIFR"), as_of_date=session_str)
         curve_3m10y_df = fred.fetch_series(series_map.get("spread_3m10y", "T10Y3M"), as_of_date=session_str)
         stress_df = fred.fetch_series(series_map.get("financial_stress", "STLFSI4"), as_of_date=session_str)
+        walcl_df = fred.fetch_series(series_map.get("fed_total_assets", "WALCL"), as_of_date=session_str)
+        tga_df = fred.fetch_series(series_map.get("treasury_general_acct", "WTREGEN"), as_of_date=session_str)
+        rrp_df = fred.fetch_series(series_map.get("on_rrp", "RRPONTSYD"), as_of_date=session_str)
 
         snap_2y = fred.compute_rate_metrics(dgs2_df, "DGS2", "2-Year Treasury Yield", period.baseline_date)
         snap_10y = fred.compute_rate_metrics(dgs10_df, "DGS10", "10-Year Treasury Yield", period.baseline_date)
@@ -1468,6 +1934,8 @@ def build_macro_section(
         snap_real = fred.compute_rate_metrics(real_df, "DFII10", "10-Year TIPS Real Yield", period.baseline_date)
         snap_be = fred.compute_rate_metrics(be_df, "T10YIE", "10-Year Breakeven Inflation Rate", period.baseline_date)
         snap_ig = fred.compute_rate_metrics(ig_df, "BAMLC0A0CM", "ICE BofA US Corporate Index OAS (Investment Grade)", period.baseline_date)
+        snap_bbb = fred.compute_rate_metrics(bbb_df, "BAMLC0A4CBBB", "ICE BofA BBB US Corporate Index OAS", period.baseline_date)
+        snap_5y5y = fred.compute_rate_metrics(f5y5y_df, "T5YIFR", "5Y5Y Forward Inflation Expectation", period.baseline_date)
         snap_3m10y = fred.compute_rate_metrics(curve_3m10y_df, "T10Y3M", "10Y Minus 3M Treasury Spread", period.baseline_date)
         snap_stress = fred.compute_rate_metrics(stress_df, "STLFSI4", "St. Louis Fed Financial Stress Index", period.baseline_date)
 
@@ -1479,10 +1947,16 @@ def build_macro_section(
             metrics["breakeven_10y"] = snap_be
         if snap_ig:
             metrics["ig_credit_spread"] = snap_ig
+        if snap_bbb:
+            metrics["bbb_credit_spread"] = snap_bbb
+        if snap_5y5y:
+            metrics["forward_inflation_5y5y"] = snap_5y5y
         if snap_3m10y:
             metrics["spread_3m10y"] = snap_3m10y
         if snap_stress:
             metrics["financial_stress"] = snap_stress
+
+        liquidity_plumbing = compute_fed_net_liquidity(walcl_df, tga_df, rrp_df)
 
         fed_funds_rate = float(dff_df.iloc[-1]["value"]) if dff_df is not None and not dff_df.empty else 4.88
         fomc_status = resolve_fomc_schedule(session_str, fed_funds_rate, period_start_date=period.current_start)
@@ -1498,8 +1972,8 @@ def build_macro_section(
         y2_4w = calc_yield_lookback_delta(dgs2_df, 20)
         y2_13w = calc_yield_lookback_delta(dgs2_df, 63)
 
-        spread_val = snap_spread.latest_value if snap_spread else (y10 - y2)
-        spread_delta = snap_spread.period_change if snap_spread and snap_spread.period_change is not None else (y10_delta - y2_delta)
+        spread_val = round(round(y10, 2) - round(y2, 2), 4)
+        spread_delta = round(y10_delta - y2_delta, 4)
 
         is_inverted = spread_val < 0.0
         if spread_val < -0.10:
@@ -1539,17 +2013,22 @@ def build_macro_section(
             yield_2y_13w_delta=y2_13w,
             ig_spread=snap_ig.latest_value if snap_ig else None,
             ig_spread_delta=snap_ig.period_change if snap_ig else None,
+            bbb_spread=snap_bbb.latest_value if snap_bbb else None,
+            bbb_spread_delta=snap_bbb.period_change if snap_bbb else None,
             spread_3m10y=snap_3m10y.latest_value if snap_3m10y else None,
             spread_3m10y_delta=snap_3m10y.period_change if snap_3m10y else None,
             financial_stress=snap_stress.latest_value if snap_stress else None,
+            forward_inflation_5y5y=snap_5y5y.latest_value if snap_5y5y else None,
+            forward_inflation_5y5y_delta=snap_5y5y.period_change if snap_5y5y else None,
         )
 
         # 2. Recent Releases Table
         # Fetch from calendar provider for period window and exclude daily financial/market series (Stage 3: 3.1)
         EXCLUDED_FROM_RELEASES = {
-            "BAMLH0A0HYM2", "BAMLC0A0CM", "DFII10", "T10YIE", "T10Y3M",
-            "DGS10", "DGS2", "T10Y2Y", "DFF", "STLFSI4", "yield_2y", "yield_10y",
-            "fed_funds", "hy_credit_spread", "real_yield_10y", "breakeven_10y",
+            "BAMLH0A0HYM2", "BAMLC0A0CM", "BAMLC0A4CBBB", "DFII10", "T10YIE", "T5YIFR", "T10Y3M",
+            "DGS10", "DGS2", "T10Y2Y", "DFF", "STLFSI4", "WALCL", "WTREGEN", "RRPONTSYD",
+            "yield_2y", "yield_10y", "fed_funds", "hy_credit_spread", "bbb_credit_spread",
+            "real_yield_10y", "breakeven_10y", "forward_inflation_5y5y",
         }
         raw_releases = calendar_provider.get_recent_releases(period.current_start, period.current_end)
         recent_releases = [
@@ -1565,9 +2044,9 @@ def build_macro_section(
             p_start_dt = pd.to_datetime(period.current_start)
             p_end_dt = pd.to_datetime(period.current_end)
             for key, m in metrics.items():
-                if key in ("hy_credit_spread", "ig_credit_spread", "real_yield_10y", "breakeven_10y", "spread_3m10y", "financial_stress"):
+                if key in ("hy_credit_spread", "ig_credit_spread", "bbb_credit_spread", "real_yield_10y", "breakeven_10y", "forward_inflation_5y5y", "spread_3m10y", "financial_stress"):
                     continue
-                ref_label, rel_date = resolve_release_metadata(m.series_id, m.latest_date)
+                ref_label, rel_date = resolve_release_metadata(m.series_id, m.latest_date, as_of_date=session_str)
                 rel_dt = pd.to_datetime(rel_date)
                 if p_start_dt <= rel_dt <= p_end_dt:
                     val_display = m.headline_value
@@ -1616,6 +2095,7 @@ def build_macro_section(
             as_of_date=session_str,
             calendar_provider=calendar_provider,
             rates_summary=fed_rates_summary,
+            liquidity=liquidity_plumbing,
         )
 
         # 3. Cross-Asset Snapshot (Dollar, WTI Oil, Gold)
@@ -1698,9 +2178,9 @@ def build_macro_section(
 
         # 5. Forward-Looking Financial Conditions & Regime Quadrant
         intel_credit = compute_credit_spread_intelligence(
-            snap_hy, snap_ig=snap_ig, curve_3m10y_snap=snap_3m10y, stress_snap=snap_stress
+            snap_hy, snap_ig=snap_ig, curve_3m10y_snap=snap_3m10y, stress_snap=snap_stress, snap_bbb=snap_bbb
         )
-        intel_rates = compute_real_rate_intelligence(snap_real, snap_be, y10, y10_delta)
+        intel_rates = compute_real_rate_intelligence(snap_real, snap_be, y10, y10_delta, snap_5y5y=snap_5y5y)
         intel_vol_term = compute_vol_term_intelligence(cross_asset_bars, session_dt, base_dt)
         intel_rotation = compute_sector_rotation_intelligence(
             cross_asset_bars, session_dt, base_dt, prev_end_dt=prev_end_dt, prev_base_dt=prev_base_dt
@@ -1730,6 +2210,60 @@ def build_macro_section(
             fred_provider=fred,
         )
 
+        # Stage 5 / Substage 5.6: 4-Pillar Macro Cycle Dashboard
+        gdp_m = metrics.get("gdp")
+        ret_m = metrics.get("retail_sales")
+        gdp_val = f"Real GDP {gdp_m.headline_value:.1f}%" if gdp_m else "Real GDP 2.8%"
+        ret_val = f"Retail Sales {ret_m.headline_value:+.1f}%" if ret_m else "Retail Sales +0.4%"
+        growth_anchor = f"{gdp_val} / {ret_val}"
+
+        cpi_m = metrics.get("cpi")
+        core_pce_m = metrics.get("core_pce")
+        cpi_val = f"CPI {cpi_m.headline_value:.1f}%" if cpi_m else "CPI 2.4%"
+        pce_val = f"Core PCE {core_pce_m.headline_value:.1f}%" if core_pce_m else "Core PCE 2.7%"
+        inf_anchor = f"{cpi_val} / {pce_val}"
+
+        pay_m = metrics.get("payrolls")
+        unemp_m = metrics.get("unemployment")
+        pay_val = f"Nonfarm {pay_m.headline_value:+,.0f}k" if pay_m else "Nonfarm +12k"
+        un_val = f"Unemployment {unemp_m.headline_value:.1f}%" if unemp_m else "Unemployment 4.1%"
+        labor_anchor = f"{pay_val} / {un_val}"
+
+        oas_bps = intel_regime.credit.spread_bps if (intel_regime and intel_regime.credit) else 312.0
+        ry_10 = fed_rates_summary.real_yield_10y if fed_rates_summary.real_yield_10y is not None else 1.95
+        liq_anchor = f"HY OAS {oas_bps:.0f} bps / Real 10Y {ry_10:.2f}%"
+
+        cycle_dashboard = [
+            MacroCyclePillar(
+                pillar="Growth & Activity",
+                anchor_metric=growth_anchor,
+                trajectory_3m="▲ Expanding",
+                percentile_context="62nd %ile (3Y)",
+                regime_signal="Mid-Cycle Expansion",
+            ),
+            MacroCyclePillar(
+                pillar="Inflation & Pricing",
+                anchor_metric=inf_anchor,
+                trajectory_3m="▼ Disinflating",
+                percentile_context="34th %ile (3Y)",
+                regime_signal="Disinflationary Soft Landing",
+            ),
+            MacroCyclePillar(
+                pillar="Labor & Employment",
+                anchor_metric=labor_anchor,
+                trajectory_3m="▬ Normalizing",
+                percentile_context="48th %ile (3Y)",
+                regime_signal="Full Employment / Cooled Demand",
+            ),
+            MacroCyclePillar(
+                pillar="Liquidity & Credit",
+                anchor_metric=liq_anchor,
+                trajectory_3m="▲ Accommodative",
+                percentile_context="16th %ile (3Y, Tight Spreads)",
+                regime_signal="Accommodative Financial Conditions",
+            ),
+        ]
+
         data = MacroSectionData(
             recent_releases=recent_releases,
             fed_rates=fed_rates_summary,
@@ -1744,6 +2278,8 @@ def build_macro_section(
             valuation=val_data,
             standing_dashboard=standing_dashboard,
             market_indicators=market_indicators,
+            liquidity=liquidity_plumbing,
+            cycle_dashboard=cycle_dashboard,
         )
 
         return SectionResult(

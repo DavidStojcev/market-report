@@ -164,10 +164,10 @@ def test_timeframe_decluttering_in_renders():
     md_monthly = render_markdown(period=p_monthly, sections=[sec_movers])
     html_monthly = render_html(period=p_monthly, sections=[sec_movers])
 
-    # Monthly report must display Monthly Movers and Final Week Movers, but NOT Daily Movers
+    # Monthly report must display Monthly Movers, and NOT Daily or Final Week Movers
     assert "### Monthly Movers" in md_monthly
-    assert "### Final Week Movers" in md_monthly
+    assert "### Final Week Movers" not in md_monthly
     assert "### Daily Movers" not in md_monthly
     assert "Monthly Universe Movers" in html_monthly
-    assert "Final Week Universe Movers" in html_monthly
+    assert "Final Week Universe Movers" not in html_monthly
     assert "Daily Universe Movers" not in html_monthly

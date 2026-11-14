@@ -1,0 +1,62 @@
+{
+  "2026-11-13": {
+    "ES": {
+      "contract_symbol": "ES",
+      "contract_name": "S&P 500 E-Mini (ES)",
+      "net_position": 78420,
+      "net_change_1w": 14250,
+      "percentile_3y": 68.0
+    },
+    "ZN": {
+      "contract_symbol": "ZN",
+      "contract_name": "10-Year US Treasury Note (ZN)",
+      "net_position": -412800,
+      "net_change_1w": -28100,
+      "percentile_3y": 14.0
+    },
+    "CL": {
+      "contract_symbol": "CL",
+      "contract_name": "WTI Crude Oil (CL)",
+      "net_position": 192300,
+      "net_change_1w": -8400,
+      "percentile_3y": 35.0
+    },
+    "GC": {
+      "contract_symbol": "GC",
+      "contract_name": "Gold (GC)",
+      "net_position": 245600,
+      "net_change_1w": 9800,
+      "percentile_3y": 84.0
+    }
+  },
+  "2026-10-30": {
+    "ES": {
+      "contract_symbol": "ES",
+      "contract_name": "S&P 500 E-Mini (ES)",
+      "net_position": 62150,
+      "net_change_1w": 8200,
+      "percentile_3y": 64.0
+    },
+    "ZN": {
+      "contract_symbol": "ZN",
+      "contract_name": "10-Year US Treasury Note (ZN)",
+      "net_position": -398500,
+      "net_change_1w": -12400,
+      "percentile_3y": 17.0
+    },
+    "CL": {
+      "contract_symbol": "CL",
+      "contract_name": "WTI Crude Oil (CL)",
+      "net_position": 204500,
+      "net_change_1w": 3200,
+      "percentile_3y": 39.0
+    },
+    "GC": {
+      "contract_symbol": "GC",
+      "contract_name": "Gold (GC)",
+      "net_position": 238100,
+      "net_change_1w": 7100,
+      "percentile_3y": 81.0
+    }
+  }
+}

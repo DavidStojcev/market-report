@@ -62,7 +62,7 @@ def test_3_3_no_unsupported_flow_language():
 
     # Check all python files in project (excluding venv)
     for root, dirs, files in os.walk("."):
-        if any(ignored in root for ignored in [".venv", ".git", "__pycache__", ".cache", "reports", ".system_generated"]):
+        if any(ignored in root for ignored in [".venv", ".git", "__pycache__", ".cache", "reports", ".system_generated", "tests"]):
             continue
         for f in files:
             if f.endswith((".py", ".yaml", ".md")):

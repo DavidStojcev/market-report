@@ -52,6 +52,38 @@ class SectorLeaderStock:
 
 
 @dataclass
+class StyleFactorSpreadItem:
+    """Relative return spread across equity style, size, and factor ETFs (Phase 3C)."""
+    factor_pair: str
+    long_symbol: str
+    short_symbol: str
+    period_spread_pct: float
+    ret_1m_spread_pct: Optional[float] = None
+    ret_3m_spread_pct: Optional[float] = None
+    regime_label: str = "Balanced"
+
+
+@dataclass
+class StyleFactorAttribution:
+    """Equity style, size, breadth concentration, momentum, and quality attribution."""
+    items: List[StyleFactorSpreadItem] = field(default_factory=list)
+    dominant_style: str = "Balanced / Mixed Factors"
+    synthesis: str = ""
+
+
+@dataclass
+class SectorRotationItem:
+    """10-week RS vs SPY, RS momentum, quadrant classification, and weekly candle structure (Stage 5)."""
+    symbol: str
+    name: str
+    ret_1w_pct: float
+    rs_10w_pct: float
+    rs_momentum_pct: float
+    quadrant: str            # 'Leading', 'Weakening', 'Lagging', 'Improving'
+    candle_structure: str    # 'Close Near High (Top 25%)', 'Close Near Low (Bottom 25%)', 'Inside Week', 'Outside Range', 'Mid-Range Consolidation'
+
+
+@dataclass
 class SectorReportData:
     spy_pct_change: float
     spy_prev_pct_change: float
@@ -60,12 +92,13 @@ class SectorReportData:
     sector_leaders: Dict[str, List[SectorLeaderStock]] = field(default_factory=dict)
     has_defensive_exceptions: bool = False
     defensive_exception_banner: Optional[str] = None
+    style_attribution: Optional[StyleFactorAttribution] = None
+    rotation_quadrants: List[SectorRotationItem] = field(default_factory=list)
 
 
 DEFENSIVE_EXCEPTION_BANNER = (
-    "⚠️ DEFENSIVE EXCEPTION WARNING: Market Gate remains strictly DEFENSIVE. "
-    "These select leadership candidates meet isolated relative strength criteria, "
-    "but broader portfolio equity exposure remains restricted."
+    "⚠️ DEFENSIVE REGIME OUTLIERS: Market Regime remains DEFENSIVE. "
+    "These leadership names meet isolated relative-strength criteria despite elevated broad-market risk conditions."
 )
 
 
@@ -205,6 +238,218 @@ SECTOR_CANONICAL_MAP = {
     "XLRE": "Real Estate",
     "XLU": "Utilities",
 }
+
+
+def compute_style_factor_attribution(
+    bars: Dict[str, pd.DataFrame],
+    curr_end_dt: pd.Timestamp,
+    base_dt: pd.Timestamp,
+) -> Optional[StyleFactorAttribution]:
+    """Compute equity style, size, concentration, momentum, and quality spreads strictly from PIT bars."""
+    def _ret_window(df: Optional[pd.DataFrame], lookback_bars: Optional[int] = None) -> Optional[float]:
+        if df is None or df.empty or "Close" not in df.columns:
+            return None
+        sub = df[df.index <= curr_end_dt]
+        if len(sub) < 2:
+            return None
+        c_now = float(sub.iloc[-1]["Close"])
+        if lookback_bars is None:
+            b_slice = sub[sub.index <= base_dt]
+            if b_slice.empty:
+                return None
+            c_base = float(b_slice.iloc[-1]["Close"])
+        else:
+            if len(sub) <= lookback_bars:
+                return None
+            c_base = float(sub.iloc[-(lookback_bars + 1)]["Close"])
+        if c_base <= 0:
+            return None
+        return ((c_now - c_base) / c_base) * 100.0
+
+    factor_defs = [
+        ("Growth vs. Value (IWF / IWD)", "IWF", "IWD", "Growth Leadership", "Value Leadership"),
+        ("Size: Small vs. Large (IWM / SPY)", "IWM", "SPY", "Small-Cap Risk-On", "Large-Cap Flight"),
+        ("Participation: Equal vs. Cap-Weight (RSP / SPY)", "RSP", "SPY", "Broadening Participation", "Mega-Cap Concentration"),
+        ("Momentum Factor (MTUM / SPY)", "MTUM", "SPY", "Momentum Outperformance", "Momentum Lag / Rotation"),
+        ("Quality Balance Sheet (QUAL / SPY)", "QUAL", "SPY", "Quality Defensive Tilt", "Low-Quality / Beta Bid"),
+    ]
+
+    items: List[StyleFactorSpreadItem] = []
+    spread_map: Dict[str, float] = {}
+
+    for label, long_sym, short_sym, pos_lbl, neg_lbl in factor_defs:
+        l_df = bars.get(long_sym)
+        s_df = bars.get(short_sym)
+        l_p = _ret_window(l_df, None)
+        s_p = _ret_window(s_df, None)
+        if l_p is None or s_p is None:
+            continue
+        sp_p = round(l_p - s_p, 2)
+
+        l_1m = _ret_window(l_df, 21)
+        s_1m = _ret_window(s_df, 21)
+        sp_1m = round(l_1m - s_1m, 2) if (l_1m is not None and s_1m is not None) else None
+
+        l_3m = _ret_window(l_df, 63)
+        s_3m = _ret_window(s_df, 63)
+        sp_3m = round(l_3m - s_3m, 2) if (l_3m is not None and s_3m is not None) else None
+
+        thresh = 0.25
+        regime = pos_lbl if sp_p >= thresh else (neg_lbl if sp_p <= -thresh else "Balanced / Flat")
+        items.append(
+            StyleFactorSpreadItem(
+                factor_pair=label,
+                long_symbol=long_sym,
+                short_symbol=short_sym,
+                period_spread_pct=sp_p,
+                ret_1m_spread_pct=sp_1m,
+                ret_3m_spread_pct=sp_3m,
+                regime_label=regime,
+            )
+        )
+        spread_map[long_sym] = sp_p
+
+    if not items:
+        return None
+
+    gv = spread_map.get("IWF")
+    size = spread_map.get("IWM")
+    breadth_sp = spread_map.get("RSP")
+
+    dom_bits: List[str] = []
+    if gv is not None:
+        dom_bits.append("Growth Tilt" if gv >= 0.25 else ("Value Tilt" if gv <= -0.25 else "Style-Neutral"))
+    if breadth_sp is not None:
+        dom_bits.append("Broadening Breadth" if breadth_sp >= 0.25 else ("Mega-Cap Concentration" if breadth_sp <= -0.25 else "Even Cap/Equal-Weight"))
+    dominant_style = " / ".join(dom_bits) if dom_bits else "Balanced / Mixed Factors"
+
+    synth_parts: List[str] = []
+    if gv is not None:
+        synth_parts.append(f"Growth vs. Value (IWF–IWD) printed {gv:+.2f}% for the period")
+    if size is not None:
+        synth_parts.append(f"Small-Cap vs. S&P 500 (IWM–SPY) printed {size:+.2f}%")
+    if breadth_sp is not None:
+        synth_parts.append(f"Equal-Weight vs. Cap-Weight (RSP–SPY) printed {breadth_sp:+.2f}%")
+    synthesis = "; ".join(synth_parts) + "." if synth_parts else ""
+
+    return StyleFactorAttribution(
+        items=items,
+        dominant_style=dominant_style,
+        synthesis=synthesis,
+    )
+
+
+def compute_sector_rotation_quadrants(
+    bars: Dict[str, pd.DataFrame],
+    spy_df: Optional[pd.DataFrame],
+    curr_end_dt: pd.Timestamp,
+    base_dt: pd.Timestamp,
+    prev_end_dt: pd.Timestamp,
+    prev_base_dt: pd.Timestamp,
+) -> List[SectorRotationItem]:
+    """Compute 10-week RS vs SPY, RS momentum, rotation quadrant, and weekly candle structure for 11 SPDR sectors."""
+    sector_syms = [
+        ("XLK", "Technology"),
+        ("XLC", "Communication Services"),
+        ("XLY", "Consumer Discretionary"),
+        ("XLP", "Consumer Staples"),
+        ("XLE", "Energy"),
+        ("XLF", "Financials"),
+        ("XLV", "Health Care"),
+        ("XLI", "Industrials"),
+        ("XLB", "Materials"),
+        ("XLRE", "Real Estate"),
+        ("XLU", "Utilities"),
+    ]
+
+    if spy_df is None or spy_df.empty or "Close" not in spy_df.columns:
+        return []
+
+    spy_sub = spy_df[spy_df.index <= curr_end_dt]
+    if len(spy_sub) < 5:
+        return []
+
+    c_spy_now = float(spy_sub["Close"].iloc[-1])
+    spy_c_50 = float(spy_sub["Close"].iloc[-51]) if len(spy_sub) >= 51 else float(spy_sub["Close"].iloc[0])
+    spy_c_20 = float(spy_sub["Close"].iloc[-21]) if len(spy_sub) >= 21 else float(spy_sub["Close"].iloc[0])
+    spy_ret_10w = ((c_spy_now - spy_c_50) / spy_c_50) * 100.0 if spy_c_50 > 0 else 0.0
+    spy_ret_4w = ((c_spy_now - spy_c_20) / spy_c_20) * 100.0 if spy_c_20 > 0 else 0.0
+
+    items: List[SectorRotationItem] = []
+    for sym, name in sector_syms:
+        df = bars.get(sym)
+        if df is None or df.empty or "Close" not in df.columns:
+            continue
+        sub = df[df.index <= curr_end_dt]
+        if len(sub) < 5:
+            continue
+
+        c_now = float(sub["Close"].iloc[-1])
+        c_base_slice = sub[sub.index <= base_dt]
+        c_base = float(c_base_slice["Close"].iloc[-1]) if not c_base_slice.empty else float(sub["Close"].iloc[0])
+        ret_1w = ((c_now - c_base) / c_base) * 100.0 if c_base > 0 else 0.0
+
+        c_50 = float(sub["Close"].iloc[-51]) if len(sub) >= 51 else float(sub["Close"].iloc[0])
+        c_20 = float(sub["Close"].iloc[-21]) if len(sub) >= 21 else float(sub["Close"].iloc[0])
+        sec_ret_10w = ((c_now - c_50) / c_50) * 100.0 if c_50 > 0 else 0.0
+        sec_ret_4w = ((c_now - c_20) / c_20) * 100.0 if c_20 > 0 else 0.0
+
+        rs_10w = sec_ret_10w - spy_ret_10w
+        rs_4w = sec_ret_4w - spy_ret_4w
+        rs_mom = rs_4w - (rs_10w * 0.4)
+
+        if rs_10w >= 0 and rs_mom >= 0:
+            quadrant = "Leading"
+        elif rs_10w >= 0 and rs_mom < 0:
+            quadrant = "Weakening"
+        elif rs_10w < 0 and rs_mom < 0:
+            quadrant = "Lagging"
+        else:
+            quadrant = "Improving"
+
+        # Weekly Candle Structure
+        w_bars = sub[sub.index > base_dt]
+        if w_bars.empty:
+            w_bars = sub.tail(5)
+
+        w_high = float(w_bars["High"].max()) if "High" in w_bars.columns else float(w_bars["Close"].max())
+        w_low = float(w_bars["Low"].min()) if "Low" in w_bars.columns else float(w_bars["Close"].min())
+        w_close = float(w_bars["Close"].iloc[-1])
+
+        pw_bars = sub[(sub.index > prev_base_dt) & (sub.index <= prev_end_dt)]
+        if pw_bars.empty:
+            pw_slice = sub[sub.index <= prev_end_dt]
+            pw_bars = pw_slice.tail(5) if len(pw_slice) >= 5 else pw_slice
+
+        pw_high = float(pw_bars["High"].max()) if (not pw_bars.empty and "High" in pw_bars.columns) else 0.0
+        pw_low = float(pw_bars["Low"].min()) if (not pw_bars.empty and "Low" in pw_bars.columns) else 0.0
+
+        rng = w_high - w_low
+        if pw_high > 0 and pw_low > 0 and w_high <= pw_high and w_low >= pw_low:
+            candle_structure = "Inside Week"
+        elif pw_high > 0 and pw_low > 0 and w_high > pw_high and w_low < pw_low:
+            candle_structure = "Outside Range"
+        elif rng > 0 and (w_close - w_low) / rng >= 0.75:
+            candle_structure = "Close Near High (Top 25%)"
+        elif rng > 0 and (w_close - w_low) / rng <= 0.25:
+            candle_structure = "Close Near Low (Bottom 25%)"
+        else:
+            candle_structure = "Mid-Range Consolidation"
+
+        items.append(
+            SectorRotationItem(
+                symbol=sym,
+                name=name,
+                ret_1w_pct=round(ret_1w, 2),
+                rs_10w_pct=round(rs_10w, 2),
+                rs_momentum_pct=round(rs_mom, 2),
+                quadrant=quadrant,
+                candle_structure=candle_structure,
+            )
+        )
+
+    items.sort(key=lambda x: x.rs_10w_pct, reverse=True)
+    return items
 
 
 def build_sectors(
@@ -517,7 +762,20 @@ def build_sectors(
                 if cond_a and cond_b and cond_c and cond_d:
                     cand.is_exception_candidate = True
                     if not cand.exception_reason:
-                        cand.exception_reason = "Defensive exception criteria qualified"
+                        cand.exception_reason = "Defensive regime relative-strength outlier"
+
+    # Stage 3 / Phase 3C: Style, Size & Factor Attribution (IWF/IWD, IWM/SPY, RSP/SPY, MTUM/SPY, QUAL/SPY)
+    style_attr = compute_style_factor_attribution(bars=bars, curr_end_dt=curr_end_dt, base_dt=base_dt)
+
+    # Stage 5 / Substage 5.5: Sector Rotation Quadrants & Weekly Candle Structure
+    rot_quadrants = compute_sector_rotation_quadrants(
+        bars=bars,
+        spy_df=spy_df,
+        curr_end_dt=curr_end_dt,
+        base_dt=base_dt,
+        prev_end_dt=prev_end_dt,
+        prev_base_dt=prev_base_dt,
+    )
 
     return SectionResult(
         section_num=5,
@@ -531,5 +789,7 @@ def build_sectors(
             sector_leaders=sector_leaders,
             has_defensive_exceptions=has_exceptions,
             defensive_exception_banner=banner,
+            style_attribution=style_attr,
+            rotation_quadrants=rot_quadrants,
         ),
     )

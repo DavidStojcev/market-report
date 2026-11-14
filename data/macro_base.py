@@ -27,6 +27,7 @@ class MacroEvent:
     source_name: str = ""
     source_url: str = ""
     retrieval_timestamp: str = ""
+    consensus_source: str = ""
 
 
 def compute_lookback_return(df: Any, as_of_date: Any, lookback_bars: int = 63) -> float:

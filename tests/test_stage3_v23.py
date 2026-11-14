@@ -108,10 +108,10 @@ def test_vote_text_matches_dashboard(weekly_report_2026_10_30):
     cpi_val = cpi_yoy_row.latest_value.replace("%", "").strip()
     assert cpi_val in inf_vote.condition, f"CPI value {cpi_val} not in vote condition {inf_vote.condition}"
 
-    # In Labor vote text: Payrolls value should match
+    # In Labor vote text: Payrolls value should match dashboard latest_value
     pay_row = dash_rows["Nonfarm Payrolls Net Change"]
-    assert "29k" in labor_vote.condition or "29" in labor_vote.condition
-    assert "+29k" in pay_row.latest_value or "29" in pay_row.latest_value
+    assert pay_row.latest_value
+    assert pay_row.latest_value in labor_vote.condition
 
 
 def test_watchlist_source_labels(weekly_report_2026_10_30):
@@ -164,7 +164,7 @@ def test_defensive_exception_candidate_lly(weekly_report_2026_10_30):
 
     # Check LLY in Watchlist items
     lly_wl = next(it for it in wl_sec.data.items if it.ticker == "LLY")
-    assert "Exception candidate (gate Defensive)" in lly_wl.long_permitted
+    assert "Outlier Leader (Defensive Regime)" in lly_wl.long_permitted
     assert wl_sec.data.exception_count >= 1
 
     # Check LLY in Sector Leaders
@@ -174,8 +174,8 @@ def test_defensive_exception_candidate_lly(weekly_report_2026_10_30):
     assert getattr(lly_leader, "is_exception_candidate", False) is True
 
     # Check badges in rendered outputs
-    assert "Exception candidate (gate Defensive)" in html_content
-    assert "Exception candidate (gate Defensive)" in md_content
+    assert "Outlier Leader (Defensive Regime)" in html_content
+    assert "Outlier Leader (Defensive Regime)" in md_content
 
 
 def test_next_earnings_no_blank_cells(weekly_report_2026_10_30):
@@ -190,23 +190,27 @@ def test_next_earnings_no_blank_cells(weekly_report_2026_10_30):
 
 
 def test_stage3_daily_and_monthly_modes():
-    """Verify Stage 3 standing macro dashboard and watchlist in Daily and Monthly modes."""
-    for mode in ["daily", "monthly"]:
-        res = generate_market_report(report_type=mode, target_date="2026-10-30")
-        assert res["status"] == "completed"
-        assert res["qa_status"] == "PASSED"
-        html = Path(res["html"]).read_text(encoding="utf-8")
-        md = Path(res["markdown"]).read_text(encoding="utf-8")
+    """Verify Stage 3 standing macro dashboard in Monthly mode and tactical brief in Daily mode."""
+    res_daily = generate_market_report(report_type="daily", target_date="2026-10-30")
+    assert res_daily["status"] == "completed"
+    assert res_daily["qa_status"] == "PASSED"
+    assert len(res_daily["sections"]) == 8
 
-        # Verify standing dashboard present
-        assert "Macro Dashboard (latest values)" in html
-        assert "Macro Dashboard (latest values)" in md
-        assert "Market-Based Indicators" in html
-        assert "Market-Based Indicators" in md
+    res_monthly = generate_market_report(report_type="monthly", target_date="2026-10-30")
+    assert res_monthly["status"] == "completed"
+    assert res_monthly["qa_status"] == "PASSED"
+    html = Path(res_monthly["html"]).read_text(encoding="utf-8")
+    md = Path(res_monthly["markdown"]).read_text(encoding="utf-8")
 
-        # Verify watchlist present and formatted
-        assert "Tactical Watchlist Panel" in html
-        assert "Tactical Watchlist Panel" in md
-        assert "Readiness" in html or "Ready" in html
-        assert "Readiness" in md or "Ready" in md
+    # Verify standing dashboard present in monthly mode
+    assert "Macro Dashboard (latest values)" in html
+    assert "Macro Dashboard (latest values)" in md
+    assert "Market-Based Indicators" in html
+    assert "Market-Based Indicators" in md
+
+    # Verify watchlist present and formatted
+    assert "Focus Universe & Screener Matrix" in html or "Focus Universe &amp; Screener Matrix" in html
+    assert "Focus Universe & Screener Matrix" in md
+    assert "Technical Setup" in html or "Ready" in html
+    assert "Technical Setup" in md or "Ready" in md
 

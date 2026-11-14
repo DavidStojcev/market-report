@@ -83,8 +83,105 @@ class MarketBreadthResult:
     delta_mcclellan_oscillator: Optional[float] = None
     mcclellan_status: Optional[str] = None
 
+    # Stage B1: Trailing 1-Year (252-session) Percentile Ranks
+    pct_above_50_dma_pctile_1y: Optional[float] = None
+    pct_above_200_dma_pctile_1y: Optional[float] = None
+    mcclellan_pctile_1y: Optional[float] = None
+    net_new_highs_pctile_1y: Optional[float] = None
+
+    # Stage B1 & Stage 3: Historical Analog Base-Rate Study
+    analog_study: Optional["HistoricalAnalogStudy"] = None
+
     # Plain-language summary
     breadth_read: str = ""
+
+
+def trailing_percentile_rank(series: pd.Series, window: int = 252, min_obs: int = 60) -> Optional[float]:
+    """Compute trailing window empirical mid-rank percentile (0..100) for the latest reading."""
+    if series is None or len(series) == 0:
+        return None
+    s = pd.to_numeric(series, errors="coerce").dropna()
+    if len(s) < min_obs:
+        return None
+    tail = s.iloc[-window:]
+    curr_val = float(tail.iloc[-1])
+    lt = float((tail < curr_val).sum())
+    eq = float((tail == curr_val).sum())
+    pct = ((lt + 0.5 * eq) / len(tail)) * 100.0
+    return round(pct, 1)
+
+
+_trailing_percentile = trailing_percentile_rank
+
+
+def format_percentile_ordinal(val: Optional[float]) -> str:
+    """Format a 0..100 percentile value as an ordinal rank string (e.g. '84th %ile')."""
+    if val is None:
+        return "—"
+    n = int(round(val))
+    if 11 <= (n % 100) <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix} %ile"
+
+
+from sections.historical_analog import (
+    AnalogHorizonStat,
+    AnalogHorizonStats,
+    HistoricalAnalogStudy,
+    build_historical_analog,
+    wilson_score_interval,
+)
+
+
+def _vix_bucket_label(vix_val: float) -> str:
+    if vix_val < 18.0:
+        return "Low (<18)"
+    if vix_val < 23.0:
+        return "Moderate (18-23)"
+    return "Elevated (>=23)"
+
+
+def _breadth_band_label(p50_val: float) -> str:
+    if p50_val >= 60.0:
+        return "Strong (>=60%)"
+    if p50_val >= 40.0:
+        return "Neutral (40-60%)"
+    return "Weak (<40%)"
+
+
+def _decluster_positions(positions: np.ndarray, min_spacing: int = 5) -> List[int]:
+    """Keep independent analog observations separated by at least min_spacing sessions."""
+    selected: List[int] = []
+    for pos in positions:
+        p = int(pos)
+        if not selected or (p - selected[-1]) >= min_spacing:
+            selected.append(p)
+    return selected
+
+
+def _compute_historical_analog_study(
+    p50_series: pd.Series,
+    p50_curr: float,
+    curr_dt: pd.Timestamp,
+    spy_df: Optional[pd.DataFrame],
+    vix_df: Optional[pd.DataFrame] = None,
+    spx_df: Optional[pd.DataFrame] = None,
+    p200_series: Optional[pd.Series] = None,
+    p200_curr: Optional[float] = None,
+) -> Optional[HistoricalAnalogStudy]:
+    """Run an in-memory base-rate forward-return study delegating to build_historical_analog."""
+    return build_historical_analog(
+        spx_df=spx_df if spx_df is not None and not spx_df.empty else spy_df,
+        vix_df=vix_df,
+        curr_dt=curr_dt,
+        p50_series=p50_series,
+        p50_curr=p50_curr,
+        p200_series=p200_series,
+        p200_curr=p200_curr,
+        spy_df=spy_df,
+    )
 
 
 def _extract_period_return(
@@ -125,6 +222,8 @@ def compute_market_breadth(
     rsp_df: Optional[pd.DataFrame] = None,
     spx_return_pct: Optional[float] = None,
     prior_snapshot: Optional[Dict[str, Any]] = None,
+    vix_df: Optional[pd.DataFrame] = None,
+    spx_df: Optional[pd.DataFrame] = None,
 ) -> MarketBreadthResult:
     """Compute comprehensive market breadth metrics across S&P 500 constituents using vectorized pandas."""
     # 1. Resolve S&P 500 universe
@@ -343,12 +442,12 @@ def compute_market_breadth(
             net_highs = new_highs - new_lows
 
             prev_slice = slice(prev_base_pos + 1, prev_pos + 1)
-            if prev_base_pos + 1 <= prev_pos:
+            if "net_new_highs" in prior_breadth:
+                prev_net_highs = int(prior_breadth["net_new_highs"])
+            elif prev_base_pos + 1 <= prev_pos:
                 p_hit_high = (df_close.iloc[prev_slice] >= rolling_max.iloc[prev_slice]).any(axis=0)
                 p_hit_low = (df_close.iloc[prev_slice] <= rolling_min.iloc[prev_slice]).any(axis=0)
                 prev_net_highs = int(p_hit_high.sum()) - int(p_hit_low.sum())
-            elif "net_new_highs" in prior_breadth:
-                prev_net_highs = int(prior_breadth["net_new_highs"])
             else:
                 prev_net_highs = 0
         else:
@@ -359,15 +458,15 @@ def compute_market_breadth(
             new_lows = int((curr_row <= prior_min).sum())
             net_highs = new_highs - new_lows
 
-            if prev_pos >= 251:
+            if "net_new_highs" in prior_breadth:
+                prev_net_highs = int(prior_breadth["net_new_highs"])
+            elif prev_pos >= 251:
                 prev_window = df_close.iloc[prev_pos - 251 : prev_pos]
                 prev_max = prev_window.max()
                 prev_min = prev_window.min()
                 p_nh = int((prev_row >= prev_max).sum())
                 p_nl = int((prev_row <= prev_min).sum())
                 prev_net_highs = p_nh - p_nl
-            elif "net_new_highs" in prior_breadth:
-                prev_net_highs = int(prior_breadth["net_new_highs"])
             else:
                 prev_net_highs = 0
     else:
@@ -417,11 +516,13 @@ def compute_market_breadth(
     prev_mcclellan_val = None
     delta_mcclellan_val = None
     mcclellan_status = None
+    osc_series: Optional[pd.Series] = None
 
     if cfg.mcclellan_enabled and len(daily_net) >= 39:
         ema19 = daily_net.ewm(span=19, adjust=False).mean()
         ema39 = daily_net.ewm(span=39, adjust=False).mean()
         osc = ema19 - ema39
+        osc_series = osc.iloc[38:]
         mcclellan_val = float(osc.iloc[curr_pos])
 
         if "mcclellan_oscillator" in prior_breadth:
@@ -440,6 +541,54 @@ def compute_market_breadth(
             mcclellan_status = "Bearish Momentum"
         else:
             mcclellan_status = "Neutral"
+
+    # 9B. Stage B1: Trailing 1Y Percentiles & Historical Analog Base-Rate Study
+    min_valid_cols = max(1, int(0.5 * df_close.shape[1]))
+    valid_50 = sma50.notna()
+    denom_50 = valid_50.sum(axis=1)
+    mask_50_rows = denom_50 >= min_valid_cols
+    p50_series = (
+        ((df_close > sma50) & valid_50).sum(axis=1)[mask_50_rows] / denom_50[mask_50_rows] * 100.0
+    )
+
+    valid_200 = sma200.notna()
+    denom_200 = valid_200.sum(axis=1)
+    mask_200_rows = denom_200 >= min_valid_cols
+    p200_series = (
+        ((df_close > sma200) & valid_200).sum(axis=1)[mask_200_rows] / denom_200[mask_200_rows] * 100.0
+    )
+
+    pct_above_50_pctile = _trailing_percentile(p50_series)
+    pct_above_200_pctile = _trailing_percentile(p200_series)
+    mcclellan_pctile = _trailing_percentile(osc_series) if osc_series is not None else None
+
+    net_highs_pctile = None
+    if len(df_close) >= 252:
+        roll_max_251 = df_close.rolling(251, min_periods=200).max().shift(1)
+        roll_min_251 = df_close.rolling(251, min_periods=200).min().shift(1)
+        hit_h_daily = df_close >= roll_max_251
+        hit_l_daily = df_close <= roll_min_251
+        curr_idx_pos = len(df_close) - 1
+        win_days = max(1, curr_idx_pos - base_pos) if (period.report_type in ("weekly", "monthly") and base_pos < curr_idx_pos - 1) else 1
+        if win_days > 1:
+            p_nh_s = (hit_h_daily.rolling(win_days, min_periods=win_days).sum() > 0).sum(axis=1)
+            p_nl_s = (hit_l_daily.rolling(win_days, min_periods=win_days).sum() > 0).sum(axis=1)
+            net_hl_series = (p_nh_s - p_nl_s).iloc[200 + win_days - 1:]
+        else:
+            net_hl_series = (hit_h_daily.sum(axis=1) - hit_l_daily.sum(axis=1)).iloc[200:]
+        net_highs_pctile = _trailing_percentile(net_hl_series)
+
+    p200_curr_val = float(p200_series.iloc[-1]) if not p200_series.empty else None
+    analog_study = build_historical_analog(
+        spx_df=spx_df,
+        vix_df=vix_df,
+        curr_dt=curr_dt,
+        p50_series=p50_series,
+        p50_curr=p50_curr,
+        p200_series=p200_series,
+        p200_curr=p200_curr_val,
+        spy_df=spy_df,
+    )
 
     # 10. Plain-language Breadth Read sentence
     if narrow_leadership:
@@ -510,5 +659,10 @@ def compute_market_breadth(
         prev_mcclellan_oscillator=prev_mcclellan_val,
         delta_mcclellan_oscillator=delta_mcclellan_val,
         mcclellan_status=mcclellan_status,
+        pct_above_50_dma_pctile_1y=pct_above_50_pctile,
+        pct_above_200_dma_pctile_1y=pct_above_200_pctile,
+        mcclellan_pctile_1y=mcclellan_pctile,
+        net_new_highs_pctile_1y=net_highs_pctile,
+        analog_study=analog_study,
         breadth_read=breadth_read,
     )

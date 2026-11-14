@@ -67,7 +67,7 @@ def test_swing_gate_posture_logic(sample_price_df, sample_config):
     assert res_def.is_available
     data: SwingGateData = res_def.data
     assert data.posture == "DEFENSIVE"
-    assert "Gate Rule 4 (Defensive)" in data.triggered_rule
+    assert "Regime Tier 4 (Defensive)" in data.triggered_rule
     assert data.posture_badge_class == "badge-red"
     assert not data.spy_50dma_pass
     assert not data.qqq_50dma_pass
@@ -87,7 +87,7 @@ def test_swing_gate_posture_logic(sample_price_df, sample_config):
         cfg=sample_config,
     )
     assert res_sel.data.posture == "SELECTIVE"
-    assert "Gate Rule 3 (Selective)" in res_sel.data.triggered_rule
+    assert "Regime Tier 3 (Selective)" in res_sel.data.triggered_rule
     assert res_sel.data.posture_badge_class == "badge-yellow"
 
     # 3. Test FULL: both above 20-EMA & 50-DMA, VIX < 19.5
@@ -112,7 +112,7 @@ def test_swing_gate_posture_logic(sample_price_df, sample_config):
         cfg=sample_config,
     )
     assert res_full.data.posture == "FULL"
-    assert "Gate Rule 1 (Full)" in res_full.data.triggered_rule
+    assert "Regime Tier 1 (Expansion)" in res_full.data.triggered_rule
     assert res_full.data.posture_badge_class == "badge-green"
 
 
@@ -272,7 +272,7 @@ def test_render_markdown_and_html_stage3_integration(sample_config, sample_price
     # Render Markdown
     md = render_markdown(period=period, sections=sections)
     assert "Executive Delta Tracking" in md
-    assert "Swing-Trade Exposure Gate" in md
+    assert "Market Regime & Risk Appetite" in md
     assert "Theme / Industry ETF" in md
     assert "Cross-Asset Multi-Market Snapshot" in md
     assert "Federal Reserve Monetary Stance" in md
@@ -293,7 +293,7 @@ def test_render_markdown_and_html_stage3_integration(sample_config, sample_price
 
     # Render HTML
     html = render_html(period=period, sections=sections)
-    assert "SWING EXPOSURE POSTURE" in html
+    assert "Market Posture" in html
     assert "Single Biggest Forward Risk" in html
     assert "VOLATILITY RISK PREMIUM" in html
     assert "Movers by Theme:" in html
