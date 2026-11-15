@@ -524,7 +524,7 @@ def select_chart_of_the_day(
         candidates.append({
             "metric_name": "VRP 1Y %ile",
             "pctile": float(vrp_pct),
-            "title": "Chart of the Day: Volatility Risk Premium (VRP)",
+            "title": "Chart of the Day: CBOE Volatility & Realized Vol (VRP)",
             "current_value_str": vrp_str,
             "chart_key": "vix_regime",
             "default_file": "vix_regime.png",

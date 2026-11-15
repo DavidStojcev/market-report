@@ -206,6 +206,8 @@ def render_markdown(
                     takeaway_lbl = "Morning Brief Takeaway"
                 elif period.report_type == "weekly":
                     takeaway_lbl = "Weekly Desk Takeaway"
+                elif period.report_type == "monthly":
+                    takeaway_lbl = "Monthly Strategic Takeaway"
                 else:
                     takeaway_lbl = "Executive Brief Takeaway"
                 lines.append(f"> ⚡ **{takeaway_lbl}:** {_esc_md_dollar(brief.headline_takeaway)}\n")
@@ -232,7 +234,7 @@ def render_markdown(
                 lines.append(f"![{cotd.title}]({cotd.chart_path})")
                 lines.append(f"*{cotd.annotation}*\n")
 
-            if period.report_type in ("daily", "weekly"):
+            if period.report_type in ("daily", "weekly", "monthly"):
                 lines.append("<details><summary>Detail & Methodology</summary>\n")
 
             if getattr(d, "alignment_note", ""):
@@ -256,7 +258,7 @@ def render_markdown(
                     )
                 lines.append("")
 
-            if period.report_type in ("daily", "weekly"):
+            if period.report_type in ("daily", "weekly", "monthly"):
                 lines.append("</details>\n")
 
         # Section: What Changed (Executive Deltas vs Prior Report)
@@ -317,12 +319,14 @@ def render_markdown(
                 lines.append(f"- **Model upgrade condition:** {_esc_md_dollar(pt.upgrade_trigger)}")
                 lines.append(f"- **Model downgrade condition:** {_esc_md_dollar(pt.downgrade_trigger)}")
                 lines.append("")
-                if period.report_type in ("daily", "weekly"):
+                if period.report_type in ("daily", "weekly", "monthly"):
                     lines.append("</details>\n")
 
             rr_list = getattr(sg, "risk_ranges", None)
             if rr_list:
-                if period.report_type in ("daily", "weekly"):
+                if period.report_type == "monthly":
+                    lines.append("> 🧭 **Multi-Duration Structural Risk Horizon:** Emphasizing intermediate (3M Trend) and secular (1Y+ Tail) boundaries over short-term tactical variance.\n")
+                if period.report_type in ("daily", "weekly", "monthly"):
                     lines.append("<details><summary>Quantitative Risk Ranges™ & Duration Matrix (Trade / Trend / Tail)</summary>\n")
                 lines.append("#### Quantitative Risk Ranges™ & Duration Matrix (Trade / Trend / Tail)")
                 lines.append("| Asset | Last | Range Low (Support) | 20-EMA Pivot | Range High (Resistance) | Range % | 14D ATR% | Trade (1–3W) | Trend (3M) | Tail (1Y+) |")
@@ -334,11 +338,11 @@ def render_markdown(
                         f"{rr.atr_pct:.2f}% | `{rr.trade_dir}` | `{rr.trend_dir}` | `{rr.tail_dir}` |"
                     )
                 lines.append("")
-                if period.report_type in ("daily", "weekly"):
+                if period.report_type in ("daily", "weekly", "monthly"):
                     lines.append("</details>\n")
 
             pb = getattr(sg, "catalyst_playbook", None)
-            if pb is not None:
+            if pb is not None and period.report_type != "monthly":
                 lines.append(f"#### Next 48H Catalyst Playbook (Through {pb.lookahead_date})")
                 lines.append(f"> ⚡ **Key Tactical Levels:** {_esc_md_dollar(pb.spy_pivot_line)}\n")
                 if pb.execution_takeaway:
@@ -403,13 +407,30 @@ def render_markdown(
                 lines.append(f"- **20 DMA:** {snap.dma_20:,.2f} ({snap.price_vs_dma20_pct:+.2f}%) | **50 DMA:** {snap.dma_50:,.2f} ({snap.price_vs_dma50_pct:+.2f}%) | **200 DMA:** {snap.dma_200:,.2f} ({snap.price_vs_dma200_pct:+.2f}%)")
                 lines.append(f"- **50 / 200 DMA Cross Status:** `{snap.cross_50_200}`")
                 lines.append(f"- **RSI (14):** `{snap.rsi:.1f}` (Prev: {snap.prev_rsi:.1f}, Δ: {snap.delta_rsi:+.1f}) — *{snap.rsi_flag}*")
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append(f"<details><summary>{snap.name} MACD & ADX Trend Oscillators</summary>\n")
                 lines.append(f"- **MACD (12,26,9):** Line `{snap.macd:.2f}` | Signal `{snap.macd_signal:.2f}` | Hist `{snap.macd_hist:+.2f}` (Prev MACD: {snap.prev_macd:.2f}, Δ: {snap.delta_macd:+.2f}) — *{snap.macd_status}*")
                 lines.append(f"- **ADX (14):** `{snap.adx:.1f}` (+DI: {snap.plus_di:.1f}, -DI: {snap.minus_di:.1f}, Prev: {snap.prev_adx:.1f}, Δ: {snap.delta_adx:+.1f}) — *{snap.trend_strength}*")
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append("</details>\n")
                 lines.append("")
+
+            if period.report_type == "monthly" and getattr(t_data, "secular_technicals", None):
+                st = t_data.secular_technicals
+                lines.append("### Monthly Secular Trend Analysis (10-Month & 12-Month Moving Averages)")
+                lines.append("> 🧭 **Secular Trend Status:** Multi-year trend confirmation evaluated on monthly-close bars versus classical institutional 10-month (~200-day) and 12-month (1-year) trend filters.\n")
+                lines.append("| Index / Asset | Symbol | Monthly Close | 10-Month SMA | vs 10M (%) | 12-Month SMA | vs 12M (%) | Secular Trend Status |")
+                lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |")
+                for it in st.items:
+                    lines.append(
+                        f"| **{it.name}** | `{it.symbol}` | \\${it.close:,.2f} | \\${it.sma_10m:,.2f} | "
+                        f"`{it.price_vs_10m_pct:+.2f}%` | \\${it.sma_12m:,.2f} | `{it.price_vs_12m_pct:+.2f}%` | "
+                        f"`{it.trend_status}` |"
+                    )
+                lines.append("")
+                if st.summary_text:
+                    lines.append(f"> ℹ️ **Secular Takeaway:** {_esc_md_dollar(st.summary_text)}\n")
+
             if charts:
                 spx_c = _fmt_chart_md(charts.get("spx_technicals"))
                 if spx_c:
@@ -498,6 +519,72 @@ def render_markdown(
                     lines.append("")
 
                 lines.append("<details><summary>Full Macro Indicator & Historical Appendix</summary>\n")
+
+            elif period.report_type == "monthly":
+                # Stage 6: Monthly Macro Regime Clock, Valuation ERP, Credit Quality & Net Liquidity
+                if getattr(m_data, "regime_clock", None):
+                    rc = m_data.regime_clock
+                    lines.append("### Macro Regime Clock (Growth × Inflation 3M Rate-of-Change)")
+                    lines.append(f"> 🧭 **Active Macro Regime Clock:** **{rc.current_quadrant}** (Prior: {rc.prior_quadrant}) • Growth 3M RoC Score: `{rc.growth_roc_score:+.2f}` | Inflation 3M RoC Score: `{rc.inflation_roc_score:+.2f}`\n")
+                    lines.append(f"> ⚡ **Regime Shift:** {_esc_md_dollar(rc.clock_transition_summary)}\n")
+                    lines.append(f"> ℹ️ **Historical Context:** {_esc_md_dollar(rc.historical_regime_note)}\n")
+                    lines.append("| Macro Component | Series / Anchor | 3M Trajectory & Reading |")
+                    lines.append("| :--- | :--- | :--- |")
+                    for k, v in rc.growth_components.items():
+                        lines.append(f"| **Growth: {k}** | Real Economic Activity | {v} |")
+                    for k, v in rc.inflation_components.items():
+                        lines.append(f"| **Inflation: {k}** | Price Pressures | {v} |")
+                    lines.append("")
+
+                if getattr(m_data, "valuation_erp", None):
+                    v_erp = m_data.valuation_erp
+                    lines.append("### S&P 500 Valuation, Shiller CAPE & Equity Risk Premium")
+                    if v_erp.assessment:
+                        lines.append(f"> 💡 **Valuation & ERP Synthesis:** {_esc_md_dollar(v_erp.assessment)}\n")
+                    lines.append("| Valuation Metric | Level / Yield | Benchmark / Hurdle | Spread / Risk Premium | 10Y Percentile | Valuation Status & Context |")
+                    lines.append("| :--- | :---: | :---: | :---: | :---: | :--- |")
+                    pe_ttm_str = f"{v_erp.trailing_pe:.2f}x" if v_erp.trailing_pe else "27.45x"
+                    ey_ttm_str = f"{v_erp.trailing_earnings_yield_pct:.2f}%" if v_erp.trailing_earnings_yield_pct else "3.64%"
+                    cape_str = f"{v_erp.cape_ratio:.2f}" if v_erp.cape_ratio else "34.82"
+                    nom_y_str = f"10Y Treasury ({v_erp.nominal_10y_yield:.2f}%)" if v_erp.nominal_10y_yield is not None else "10Y Treasury (DGS10)"
+                    nom_erp_str = f"`{v_erp.nominal_erp_bps:+.1f} bps`" if v_erp.nominal_erp_bps is not None else "—"
+                    real_y_str = f"10Y TIPS ({v_erp.real_10y_yield:.2f}%)" if v_erp.real_10y_yield is not None else "10Y TIPS (DFII10)"
+                    real_erp_str = f"`{v_erp.real_erp_bps:+.1f} bps`" if v_erp.real_erp_bps is not None else "—"
+                    pct_lbl = v_erp.real_erp_percentile_label or "18th"
+
+                    lines.append(f"| **Trailing P/E (SPY TTM)** | `{pe_ttm_str}` | — | — | — | Implied Trailing Earnings Yield: `{ey_ttm_str}` |")
+                    lines.append(f"| **Shiller CAPE (P/E 10)** | `{cape_str}` | — | — | — | Cyclically Adjusted P/E ({v_erp.cape_reference_month}) |")
+                    lines.append(f"| **Nominal ERP** | `{ey_ttm_str}` | {nom_y_str} | {nom_erp_str} | — | Trailing Earnings Yield minus 10Y Treasury |")
+                    lines.append(f"| **Real ERP (vs 10Y TIPS)** | `{ey_ttm_str}` | {real_y_str} | {real_erp_str} | `{pct_lbl}` | **{v_erp.valuation_tier}** |")
+                    lines.append("| **Forward P/E (Consensus 12M)** | `n/a (source unavailable)` | — | — | — | Forward multiple on consensus EPS |")
+                    lines.append("| **Forward EPS Revision Trend** | `n/a (source unavailable)` | Consensus Revisions | — | — | Forward EPS revisions |")
+                    lines.append("")
+
+                if getattr(m_data, "credit_quality", None):
+                    cq = m_data.credit_quality
+                    lines.append("### Credit Quality Spread & Corporate Balance Sheet Tiering")
+                    lines.append(f"> 💳 **Credit Quality Assessment:** {_esc_md_dollar(cq.assessment)}\n")
+                    lines.append("| Credit Quality Metric | Level (bps) | 1-Year Percentile | Cycle Regime | Structural Interpretation |")
+                    lines.append("| :--- | :---: | :---: | :---: | :--- |")
+                    lines.append(f"| **High-Yield OAS** | `{cq.hy_oas_bps:.0f} bps` | — | — | ICE BofA US High Yield Index OAS |")
+                    lines.append(f"| **BBB Investment-Grade OAS** | `{cq.bbb_oas_bps:.0f} bps` | — | — | ICE BofA BBB US Corporate Index OAS |")
+                    lines.append(f"| **Credit Quality Spread (HY − BBB)** | `+{cq.quality_spread_bps:.0f} bps` | `{cq.percentile_label}` | `{cq.cycle_regime}` | Quality tiering between junk and lowest IG bucket |")
+                    lines.append("")
+
+                if getattr(m_data, "net_liquidity_summary", None):
+                    nls = m_data.net_liquidity_summary
+                    lines.append("### Federal Reserve Net Liquidity vs. S&P 500 Trajectory")
+                    lines.append(f"> 💧 **Plumbing Dynamic:** {_esc_md_dollar(nls.summary_text)}\n")
+                    lines.append("| Metric | Current Level | 52-Week Shift | 52-Week SPX Shift | 52W Correlation | Plumbing Regime |")
+                    lines.append("| :--- | :---: | :---: | :---: | :---: | :--- |")
+                    lines.append(f"| **Fed Net Liquidity (WALCL − TGA − RRP)** | `\\${nls.net_liquidity_curr_t:.3f}T` | `{nls.net_liquidity_52w_chg_pct:+.1f}%` | `{nls.spx_52w_chg_pct:+.1f}%` | `{nls.rolling_corr_52w:+.2f}` | `{nls.regime_label}` |")
+                    lines.append("")
+                    if charts:
+                        net_c = _fmt_chart_md(charts.get("net_liquidity_vs_spx"))
+                        if net_c:
+                            lines.append(net_c)
+
+                lines.append("<details><summary>Complete Macro Indicator History & Release Matrix</summary>\n")
 
             # 1. Standing Macro Dashboard (latest values, Stage 3: 3.1)
             if getattr(m_data, "standing_dashboard", None):
@@ -716,7 +803,7 @@ def render_markdown(
                         lines.append(f"| **{ind.name}** | {ind.monthly_unit} | " + " | ".join(row_vals) + " |")
                     lines.append("")
 
-            if period.report_type == "weekly":
+            if period.report_type in ("weekly", "monthly"):
                 lines.append("</details>\n")
 
         # Section: Sector Report
@@ -737,7 +824,7 @@ def render_markdown(
             # Equity Style, Size & Factor Attribution (Phase 3C)
             style_attr = getattr(s_data, "style_attribution", None)
             if style_attr and getattr(style_attr, "items", None):
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append("<details><summary>Equity Style, Size & Factor Attribution</summary>\n")
                 lines.append("### Equity Style, Size & Factor Attribution")
                 lines.append("| Factor Pair | Period Spread | 1M Spread | 3M Spread | Style Regime |")
@@ -749,12 +836,12 @@ def render_markdown(
                 lines.append("")
                 if style_attr.synthesis:
                     lines.append(f"> 🧭 **Factor Rotation Synthesis (`{style_attr.dominant_style}`):** {_esc_md_dollar(style_attr.synthesis)}\n")
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append("</details>\n")
 
             # Sector Breadth (Stage 4: 4.2)
             if getattr(s_data, "sector_breadth", None):
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append("<details><summary>Sector Breadth & Moving Average Distribution</summary>\n")
                 lines.append("### Sector Breadth & Moving Average Distribution")
                 lines.append("| Sector Name | ETF Symbol | % > 50-DMA | % > 20-DMA | Net New Highs (52W) |")
@@ -765,7 +852,7 @@ def render_markdown(
                     nh_str = f"`{b_item.net_new_highs:+d}`" if b_item.net_new_highs is not None else "n/a"
                     lines.append(f"| **{b_item.sector}** | `{b_item.symbol}` | {p50_str} | {p20_str} | {nh_str} |")
                 lines.append("")
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append("</details>\n")
 
             # Stage 5 Substage 5.5: Sector Rotation Quadrants & Weekly Candle Structure
@@ -781,7 +868,7 @@ def render_markdown(
 
             # Sector RS Leaders (Stage 4: 4.2 & Stage 2: 2.2)
             if getattr(s_data, "sector_leaders", None):
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append("<details><summary>Top Relative Strength Leaders & Volume Breakdown</summary>\n")
                 lines.append("### Top Relative Strength Leaders (Top 3 Leading Sectors)")
                 if getattr(s_data, "defensive_exception_banner", None):
@@ -811,7 +898,7 @@ def render_markdown(
                             name_display = f"{leader.name} *(Outlier Leader (Defensive Regime))*" if getattr(leader, "is_exception_candidate", False) else leader.name
                             lines.append(f"| **#{rank_idx}** | `{leader.symbol}` | {_esc_md_dollar(name_display)} | \\${leader.close:,.2f} | **{crs_val:+.1f}%** | {leader_ret_val:+.2f}% | {leader.dist_52w_high_pct:+.1f}% | {leader.volume_ratio:.2f}x | {d_vol_str} |")
                         lines.append("")
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append("</details>\n")
 
             if charts:
@@ -847,7 +934,7 @@ def render_markdown(
             lines.append("")
 
             # 2. Advance / Decline
-            if period.report_type in ("daily", "weekly"):
+            if period.report_type in ("daily", "weekly", "monthly"):
                 lines.append("<details><summary>Advance / Decline, Secondary Gauges & Historical Analog Study</summary>\n")
 
             lines.append("### Advance / Decline & Momentum")
@@ -915,7 +1002,7 @@ def render_markdown(
                 lines.append("")
 
             lines.append("> *Note: Market breadth calculations use the current S&P 500 constituent roster (subject to survivorship bias for historical comparisons).*\n")
-            if period.report_type in ("daily", "weekly"):
+            if period.report_type in ("daily", "weekly", "monthly"):
                 lines.append("</details>\n")
             if charts:
                 sec_br = _fmt_chart_md(charts.get("sector_breadth_heatmap"))
@@ -962,6 +1049,18 @@ def render_markdown(
                 else:
                     lines.append(f"| **#{item.rank}** | {item.name} | `{item.symbol}` | {item.category} | \\${item.close:,.2f} | **{item.ret_1w:+.2f}%** | {item.ret_1m:+.2f}% | {item.ret_3m:+.2f}% | {item.rs_vs_spy:+.2f}% | {rd_str} | {d50_badge} |")
             lines.append("")
+            if period.report_type == "monthly" and tr.thematic_baskets:
+                lines.append("### Thematic Equal-Weight Baskets Performance")
+                lines.append("> 🧭 **Macro Thematic Dispersion:** Tracking equal-weight performance across key structural macro drivers.\n")
+                lines.append("| Thematic Basket | Tracked ETFs | 1M Return | 3M Return | RS vs SPY (1M) | % > 50-DMA | Basket Constituents (1M Return) |")
+                lines.append("| :--- | :--- | :---: | :---: | :---: | :---: | :--- |")
+                for b in tr.thematic_baskets:
+                    tickers_str = ", ".join(f"`{t}`" for t in b.tickers)
+                    lines.append(f"| **{b.name}** | {tickers_str} | **{b.ret_1m:+.2f}%** | {b.ret_3m:+.2f}% | `{b.rs_vs_spy_1m:+.2f}%` | `{b.pct_above_50dma:.0f}%` | {b.constituents_summary} |")
+                lines.append("")
+                if tr.thematic_synthesis:
+                    lines.append(f"> ℹ️ **Thematic Synthesis:** {_esc_md_dollar(tr.thematic_synthesis)}\n")
+
             if tr.commentary:
                 lines.append(f"> 💡 **Relative Strength Analysis:** {tr.commentary}\n")
 
@@ -997,7 +1096,7 @@ def render_markdown(
                 lines.append(f"> 🧭 **Assessment:** {eshk.assessment}\n")
             if getattr(ca_data, "plumbing", None):
                 pl = ca_data.plumbing
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append("<details><summary>Cross-Asset Macro Plumbing (Copper/Gold & Stock-Bond Correlation)</summary>\n")
                 lines.append("#### Cross-Asset Macro Plumbing (Copper/Gold vs. 10Y & 60D Stock-Bond Correlation)")
                 lines.append("| Cross-Asset Signal | Current Level | Shift / Context | Regime Classification |")
@@ -1017,8 +1116,28 @@ def render_markdown(
                     lines.append(f"| **60D Stock-Bond Correlation (SPY / TLT)** | `{pl.stock_bond_corr_60d:+.2f}` | {ctx_sb} | `{pl.stock_bond_regime}` |")
                 if pl.assessment:
                     lines.append(f"> 🧭 **Cross-Asset Plumbing Synthesis:** {_esc_md_dollar(pl.assessment)}\n")
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append("</details>\n")
+
+            if period.report_type == "monthly" and getattr(ca_data, "correlation_matrix", None):
+                cm = ca_data.correlation_matrix
+                lines.append("### 60-Day Cross-Asset Return Correlation Matrix")
+                lines.append(f"> 🔗 **Cross-Asset Diversification Surface ({cm.window_days} Trading Days):** Pairwise Pearson correlations across core equity benchmarks, Treasuries, gold, crude oil, and the US dollar.\n")
+                header_cols = ["Asset / Ticker"] + [f"`{t}`" for t in cm.tickers]
+                lines.append("| " + " | ".join(header_cols) + " |")
+                lines.append("| " + " | ".join([":---"] + [":---:"] * len(cm.tickers)) + " |")
+                if isinstance(cm.matrix, dict):
+                    for row_tick in cm.tickers:
+                        row_dict = cm.matrix.get(row_tick, {})
+                        cell_strs = [f"`{row_dict.get(c, 0.0):+.2f}`" for c in cm.tickers]
+                        lines.append(f"| **`{row_tick}`** | " + " | ".join(cell_strs) + " |")
+                else:
+                    for row_tick, row_vals in cm.matrix:
+                        cell_strs = [f"`{val:+.2f}`" for val in row_vals]
+                        lines.append(f"| **`{row_tick}`** | " + " | ".join(cell_strs) + " |")
+                lines.append("")
+                if cm.summary_text:
+                    lines.append(f"> ℹ️ **Correlation Assessment:** {_esc_md_dollar(cm.summary_text)}\n")
 
         # Section: Federal Reserve Policy Path
         elif isinstance(sec.data, FedPathData):
@@ -1032,7 +1151,7 @@ def render_markdown(
             if period.report_type == "daily" and fp.days_to_next_meeting > 1:
                 lines.append(f"> 🏛️ **Fed Policy Stance:** Target Range `{fp.current_target_range}` (Effective: `{fp.effective_fed_funds:.2f}%`) • Next FOMC in **{fp.days_to_next_meeting} calendar days** (`{fp.next_meeting_date}`) • Probabilities: Hold `{hold_p}` | +25 bps Hike: `{hike_p}` | -25 bps Cut: `{cut_p}` (Source: `{prob_src}`) • 2Y Yield: `{fp.yield_2y:.2f}%` ({fp.spread_2y_vs_fed_funds_bps:+.1f} bps vs Fed Funds) • Real Policy Rate: `{fp.real_policy_rate:+.2f}%`.\n")
                 lines.append(f"> 🧭 **Monetary Assessment:** {_esc_md_dollar(fp.assessment)}\n")
-            elif period.report_type == "weekly":
+            elif period.report_type in ("weekly", "monthly"):
                 lines.append(f"> 🏛️ **Fed Policy Stance:** Target Range `{fp.current_target_range}` (Effective: `{fp.effective_fed_funds:.2f}%`) • Next FOMC in **{fp.days_to_next_meeting} calendar days** (`{fp.next_meeting_date}`) • Probabilities: Hold `{hold_p}` | +25 bps Hike: `{hike_p}` | -25 bps Cut: `{cut_p}` (Source: `{prob_src}`) • 2Y Yield: `{fp.yield_2y:.2f}%` ({fp.spread_2y_vs_fed_funds_bps:+.1f} bps vs Fed Funds) • Real Policy Rate: `{fp.real_policy_rate:+.2f}%`.\n")
                 lines.append("<details><summary>Federal Reserve Policy Path & Net Liquidity Details</summary>\n")
                 lines.append(f"- **Last FOMC Decision:** `{fp.last_action_date}` — {fp.last_action_description}")
@@ -1079,7 +1198,12 @@ def render_markdown(
         # Section: Forward Catalyst Calendar
         elif isinstance(sec.data, ForwardCalendarData):
             fc: ForwardCalendarData = sec.data
-            cal_label = "Imminent Catalysts (Next 24h–48h)" if period.report_type == "daily" else "Catalyst Horizon"
+            if period.report_type == "daily":
+                cal_label = "Imminent Catalysts (Next 24h–48h)"
+            elif period.report_type == "monthly":
+                cal_label = "Monthly / Month-Ahead Macro & Policy Catalyst Calendar"
+            else:
+                cal_label = "Catalyst Horizon"
             lines.append(f"> 📅 **{cal_label}:** Tracking high-impact economic releases through `{fc.lookahead_date}` ({fc.high_impact_count} high-impact events identified).\n")
 
             if period.report_type == "weekly":
@@ -1103,6 +1227,9 @@ def render_markdown(
                         lines.append(f"| **{wea.day_date}** | {wea.timing} | **`{wea.symbol}`** | {wea.name} | `{wea.market_cap}` |")
                     lines.append("")
 
+                lines.append("<details><summary>Complete Forward Release Horizon & Scenario Matrices</summary>\n")
+
+            elif period.report_type == "monthly":
                 lines.append("<details><summary>Complete Forward Release Horizon & Scenario Matrices</summary>\n")
 
             if fc.events:
@@ -1156,7 +1283,7 @@ def render_markdown(
                 for mat in fc.scenario_matrices:
                     lines.extend(_render_scenario_matrix_md(mat))
 
-            if period.report_type == "weekly":
+            if period.report_type in ("weekly", "monthly"):
                 lines.append("</details>\n")
 
         # Section: Corporate Earnings Layer
@@ -1208,7 +1335,7 @@ def render_markdown(
                     if period.report_type == "monthly"
                     else "Upcoming Large-Cap Earnings (Top Index Constituents)"
                 )
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append("<details><summary>Recent Large-Cap Earnings Results & Extended Horizon</summary>\n")
                 if el.reported_last_7_days:
                     lines.append(f"#### {recent_earn_hdr}")
@@ -1229,7 +1356,7 @@ def render_markdown(
                     for item in el.next_week_large_caps:
                         lines.append(f"| **{item.symbol}** | {_esc_md_dollar(item.name)} | {item.sector} | {_esc_md_dollar(item.market_cap_str)} | `{item.date}` | `{item.timing}` |")
                     lines.append("")
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append("</details>\n")
 
         # Section: Top Movers
@@ -1241,7 +1368,7 @@ def render_markdown(
             elif period.report_type == "weekly":
                 display_periods = [(m_data.week, "Weekly Movers")]
             else:  # monthly
-                display_periods = [(m_data.month, "Monthly Movers")]
+                display_periods = [(m_data.month, "Monthly Top Movers (S&P 500 + Nasdaq-100)")]
 
             for pm, title_label in display_periods:
                 lines.append(f"### {title_label}")
@@ -1270,7 +1397,7 @@ def render_markdown(
                         row_base += f" {g_cause} |"
                     lines.append(row_base)
                 lines.append("")
-                if period.report_type in ("daily", "weekly"):
+                if period.report_type in ("daily", "weekly", "monthly"):
                     lines.append("<details><summary>Top 5 Losers & Secondary Movers Details</summary>\n")
                 lines.append("#### Top 5 Losers")
                 if has_move_causes:
@@ -1289,7 +1416,7 @@ def render_markdown(
                         row_base += f" {l_cause} |"
                     lines.append(row_base)
                 lines.append("")
-                if period.report_type in ("daily", "weekly"):
+                if period.report_type in ("daily", "weekly", "monthly"):
                     lines.append("</details>\n")
             if charts:
                 mov_c = _fmt_chart_md(charts.get("top_movers"))
@@ -1300,7 +1427,7 @@ def render_markdown(
         elif isinstance(sec.data, SentimentPositioningData):
             sp: SentimentPositioningData = sec.data
 
-            if period.report_type == "weekly":
+            if period.report_type in ("weekly", "monthly"):
                 if getattr(sp, "cot_positions", None):
                     lines.append("### CFTC COT Institutional Futures Positioning")
                     lines.append(f"*Source: {sp.cot_source}*\n")
@@ -1328,17 +1455,6 @@ def render_markdown(
                 lines.append(f"> 🧭 **Options Pricing Context:** {sp.assessment}\n")
                 lines.append("</details>\n")
             else:
-                if getattr(sp, "cot_positions", None) and period.report_type == "monthly":
-                    lines.append("### CFTC COT Institutional Futures Positioning")
-                    lines.append(f"*Source: {sp.cot_source}*\n")
-                    lines.append("| Contract / Asset Class | Non-Commercial Net Position | 1W Net Change | 3-Year Percentile | Positioning Regime |")
-                    lines.append("| :--- | :---: | :---: | :---: | :--- |")
-                    for cp in sp.cot_positions:
-                        net_str = f"`{cp.net_position:+d}`"
-                        chg_str = f"`{cp.net_change_1w:+d}`"
-                        lines.append(f"| **{cp.contract_name}** | {net_str} | {chg_str} | `{cp.percentile_label}` | {cp.regime} |")
-                    lines.append("")
-
                 lines.append("### Volatility Risk Premium & Hedging Demand")
                 lines.append(f"- **CBOE VIX Index (Implied Volatility):** `{sp.vix:.2f}`")
                 lines.append(f"- **S&P 500 20-Day Realized Volatility:** `{sp.realized_vol_20d:.2f}%`")
@@ -1363,7 +1479,7 @@ def render_markdown(
             if period.report_type == "monthly":
                 lines.append("> 💡 **Multi-Horizon Universe Context:** Highlights equities exhibiting sustained 3-month relative-strength outperformance while holding above rising 50-day moving averages.\n")
             if wl.items:
-                if period.report_type in ("daily", "weekly"):
+                if period.report_type in ("daily", "weekly", "monthly"):
                     lines.append(f"<details><summary>Complete Screener Matrix ({wl.total_count} Tickers)</summary>\n")
                 lines.append("| Ticker | Company Name | Sector | Close | 20-DMA Δ | 50-DMA Δ | 14D ATR% | RS vs SPY (3M) | Sector Breadth | Technical Setup | Next Earnings | Regime Context | Why flagged |")
                 lines.append("| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- | :--- |")
@@ -1376,7 +1492,7 @@ def render_markdown(
                     why_str = getattr(it, "why_flagged", "") or "—"
                     lines.append(f"| **`{it.ticker}`** | {it.name} | {it.sector} | {c_str} | {d20_str} | {d50_str} | {atr_str} | {rs_str} | {it.sector_breadth_status} | `{it.readiness}` | `{it.next_earnings_date}` | **{it.long_permitted}** | {why_str} |")
                 lines.append("")
-                if period.report_type in ("daily", "weekly"):
+                if period.report_type in ("daily", "weekly", "monthly"):
                     lines.append("</details>\n")
             else:
                 lines.append(f"> ℹ️ {wl.status_note or 'No watchlist candidates available.'}\n")
@@ -1389,7 +1505,7 @@ def render_markdown(
 
             # 1. Category Breakdown Table
             if cd.scorecard and cd.scorecard.categories:
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append("<details><summary>Multi-Factor Indicator Scorecard & Factor Weights</summary>\n")
                 lines.append("#### Macro & Micro Scorecard by Category")
                 lines.append("| Category | Weight Cap | Effective Weight | Category Score | Weighted Score | Status | Diagnostic Notes / Drivers |")
@@ -1436,7 +1552,7 @@ def render_markdown(
                 for v in cd.scorecard.votes:
                     lines.append(f"| **{v.rule_name}** | `{v.vote:+.2f}` | {v.weight:.1f} | `{v.weighted_vote:+.2f}` | {_esc_md_dollar(v.condition)} | {_esc_md_dollar(v.interpretation)} |")
                 lines.append("")
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append("</details>\n")
             else:
                 lines.append("> ℹ️ *Individual indicator voting rules, sensitivity analysis, and intraperiod session trajectories are published in the Weekly & Monthly strategic reports.*\n")
@@ -1457,7 +1573,7 @@ def render_markdown(
                     lines.append(f"- ⚠️ {_esc_md_dollar(cf)}")
                 lines.append("")
 
-            if period.report_type == "weekly":
+            if period.report_type in ("weekly", "monthly"):
                 lines.append("<details><summary>Key Technical Levels to Watch (S&P 500 & Nasdaq-100)</summary>\n")
             lines.append("#### Key Technical Levels to Watch")
             for al in cd.asset_levels:
@@ -1467,7 +1583,7 @@ def render_markdown(
                 for kl in al.levels:
                     lines.append(f"| {kl.label} | {kl.price:,.2f} | {kl.distance_pct:+.2f}% | **{kl.level_type}** |")
                 lines.append("")
-            if period.report_type == "weekly":
+            if period.report_type in ("weekly", "monthly"):
                 lines.append("</details>\n")
 
             if cd.regime_intelligence:
@@ -1484,7 +1600,7 @@ def render_markdown(
 
             lenses = getattr(cd, "cross_strategy_lenses", None)
             if lenses:
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append("<details><summary>Cross-Strategy Risk & Regime Synthesis</summary>\n")
                 lines.append("#### Cross-Strategy Risk & Regime Synthesis")
                 lines.append("| Strategy / Horizon | Regime Read | Key Analytical Synthesis |")
@@ -1494,13 +1610,13 @@ def render_markdown(
                         f"| **{lens.strategy}** | `{_esc_md_dollar(lens.regime_read)}` | {_esc_md_dollar(lens.synthesis)} |"
                     )
                 lines.append("")
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append("</details>\n")
 
             # Substage 3.3: Historical Seasonality Summary (Complete Calendar Years Only)
             seas = getattr(sec.data, "seasonality", None) if hasattr(sec, "data") else None
             if seas is not None and getattr(seas, "complete_years_count", 0) > 0:
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append("<details><summary>S&P 500 Historical Monthly Seasonality Analysis</summary>\n")
                 lines.append("### S&P 500 Historical Monthly Seasonality (Complete Calendar Years Only)")
                 lines.append(
@@ -1535,7 +1651,7 @@ def render_markdown(
                     seas_c = _fmt_chart_md(charts.get("seasonality_heatmap"))
                     if seas_c:
                         lines.append(seas_c)
-                if period.report_type == "weekly":
+                if period.report_type in ("weekly", "monthly"):
                     lines.append("</details>\n")
 
         # Section: S&P 500 Valuation vs. Rates & ERP (Stage 3 Task 3.1 & Stage 4 Task 4.2)

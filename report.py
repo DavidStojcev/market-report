@@ -436,6 +436,8 @@ def generate_market_report(
         put_call_oi_ratio=None,
         skew_level=skew_curr_val,
         vvix_level=vvix_curr_val,
+        baseline_date=period_info.baseline_date,
+        period_type=period_info.report_type,
     )
 
     # Compute trend scorecard integrating technicals, VIX, macro, breadth, and sentiment votes
@@ -615,6 +617,7 @@ def generate_market_report(
         prev_baseline_date=period_info.prev_baseline_date,
         macro_data=sec_macro.data if sec_macro.is_available else None,
         cfg=cfg,
+        report_type=period_info.report_type,
     )
 
     # Section 10: Federal Reserve Policy Path
@@ -1122,6 +1125,7 @@ def generate_market_report(
         "sections": sections,
         "scorecard": scorecard,
         "period_info": period_info,
+        "period": period_info,
         "facts_registry": facts_registry,
     }
 

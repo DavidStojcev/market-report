@@ -254,6 +254,7 @@ class FredProvider:
             mom_pct=mom,
             prior_mom_pct=prior_mom,
             yoy_pct=yoy,
+            change=round(yoy - prior_yoy, 4),
             notes=f"MoM: {mom:+.2f}%, YoY: {yoy:.2f}% (Index: {latest_level:.2f})",
         )
 

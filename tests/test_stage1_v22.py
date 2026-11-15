@@ -129,8 +129,8 @@ def test_stage1_single_biggest_risk_dynamic_ranking(weekly_report_data):
 
 
 def test_stage1_mover_wording_earnings_selloff(weekly_report_data):
-    """Mover cause field and summary must use 'post-earnings selloff / guidance cuts' when Earnings = YES."""
+    """Mover cause field and summary must use honest earnings reaction when Earnings = YES."""
     md_text = weekly_report_data["md"]
     html_text = weekly_report_data["html"]
     
-    assert "post-earnings selloff / guidance cuts" in md_text or "post-earnings selloff / guidance cuts" in html_text
+    assert "post-earnings reaction / downside volume" in md_text.lower() or "post-earnings reaction / downside volume" in html_text.lower() or "post-earnings downside volume" in md_text.lower()

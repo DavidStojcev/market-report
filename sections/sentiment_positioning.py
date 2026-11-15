@@ -34,7 +34,7 @@ class SentimentPositioningData:
     assessment: str = ""
     items: List[SentimentMetricItem] = field(default_factory=list)
     cot_positions: List[Any] = field(default_factory=list)
-    cot_source: str = "CFTC Commitments of Traders (Legacy/TFF Public Domain)"
+    cot_source: str = "CFTC Commitments of Traders (Legacy/TFF Public Domain; positions as of prior Tuesday cutoff)"
 
 
 def build_sentiment_positioning(
@@ -50,6 +50,8 @@ def build_sentiment_positioning(
     skew_level: Optional[float] = None,
     vvix_level: Optional[float] = None,
     cot_positions: Optional[List[Any]] = None,
+    baseline_date: Optional[str] = None,
+    period_type: str = "daily",
 ) -> SectionResult:
     """Calculate 20-day realized volatility, volatility risk premium, and sentiment metrics."""
     try:
@@ -149,16 +151,41 @@ def build_sentiment_positioning(
             try:
                 rsp_sub = rsp_df[rsp_df.index <= as_of_dt]
                 spy_sub = spy_df[spy_df.index <= as_of_dt]
-                if len(rsp_sub) >= 5 and len(spy_sub) >= 5:
-                    rsp_ret = (float(rsp_sub["Close"].iloc[-1]) / float(rsp_sub["Close"].iloc[-5]) - 1) * 100
-                    spy_ret = (float(spy_sub["Close"].iloc[-1]) / float(spy_sub["Close"].iloc[-5]) - 1) * 100
-                    spread = rsp_ret - spy_ret
+                spread = None
+                p_label = "Daily"
+                if period_type == "monthly":
+                    p_label = "Monthly"
+                elif period_type == "weekly":
+                    p_label = "Weekly"
+
+                if baseline_date is not None:
+                    base_dt = pd.to_datetime(baseline_date)
+                    rsp_base_slice = rsp_sub[rsp_sub.index <= base_dt]
+                    spy_base_slice = spy_sub[spy_sub.index <= base_dt]
+                    if not rsp_base_slice.empty and not spy_base_slice.empty:
+                        rsp_now = float(rsp_sub["Close"].iloc[-1])
+                        rsp_base = float(rsp_base_slice["Close"].iloc[-1])
+                        spy_now = float(spy_sub["Close"].iloc[-1])
+                        spy_base = float(spy_base_slice["Close"].iloc[-1])
+                        if rsp_base > 0 and spy_base > 0:
+                            rsp_ret = (rsp_now / rsp_base - 1.0) * 100.0
+                            spy_ret = (spy_now / spy_base - 1.0) * 100.0
+                            spread = round(rsp_ret - spy_ret, 2)
+
+                if spread is None:
+                    lookback_bars = 5 if period_type == "weekly" else (21 if period_type == "monthly" else 1)
+                    if len(rsp_sub) > lookback_bars and len(spy_sub) > lookback_bars:
+                        rsp_ret = (float(rsp_sub["Close"].iloc[-1]) / float(rsp_sub["Close"].iloc[-(lookback_bars + 1)]) - 1.0) * 100.0
+                        spy_ret = (float(spy_sub["Close"].iloc[-1]) / float(spy_sub["Close"].iloc[-(lookback_bars + 1)]) - 1.0) * 100.0
+                        spread = round(rsp_ret - spy_ret, 2)
+
+                if spread is not None:
                     bias = "Equal-weight outperforming cap-weight (broad participation)" if spread > 0 else "Mega-cap concentration bias (equal-weight participation lagging)"
                     items.append(
                         SentimentMetricItem(
                             name="Equal-Weight Flow Spread (RSP vs. SPY)",
                             reading=f"{spread:+.2f}%",
-                            diagnostic=f"5-day return spread: {spread:+.2f}% — {bias}",
+                            diagnostic=f"{p_label} return spread: {spread:+.2f}% — {bias}",
                         )
                     )
             except Exception as e:

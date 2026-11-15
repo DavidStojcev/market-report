@@ -82,10 +82,10 @@ def test_mover_item_catalyst_driver_synthesis_and_backward_compatibility():
     loser_map = {l.symbol: l for l in day_movers.losers}
 
     assert gainer_map["LLY"].move_cause_tag == "Earnings"
-    assert "Earnings / guidance catalyst" in gainer_map["LLY"].catalyst_driver
+    assert "Post-earnings reaction / upside volume" in gainer_map["LLY"].catalyst_driver
 
     assert loser_map["INTC"].move_cause_tag == "Earnings"
-    assert "Post-earnings selloff / guidance cuts" in loser_map["INTC"].catalyst_driver
+    assert "Post-earnings reaction / downside volume" in loser_map["INTC"].catalyst_driver
 
     assert "52W high breakout" in gainer_map["NVDA"].catalyst_driver
     assert "cohort sympathy" in gainer_map["NVDA"].catalyst_driver
@@ -188,11 +188,11 @@ def test_stage_c_markdown_and_html_rendering():
                     market_cap=95e9,
                     has_earnings_in_window=True,
                     move_cause_tag="Earnings",
-                    catalyst_driver="Post-earnings selloff / guidance cuts (3.2x vol, AI & Semiconductors)",
+                    catalyst_driver="Post-earnings reaction / downside volume (3.2x vol, AI & Semiconductors)",
                     market_cap_str="$95.0B",
                 )
             ],
-            theme_summary="Gainers led by AI & Semiconductors; losers driven by post-earnings selloff / guidance cuts.",
+            theme_summary="Gainers led by AI & Semiconductors; losers driven by post-earnings downside volume.",
         ),
         week=PeriodMovers("Weekly", [], []),
         month=PeriodMovers("Monthly", [], []),
@@ -233,7 +233,7 @@ def test_stage_c_markdown_and_html_rendering():
 
     assert "Technical Context" in md_out
     assert "52W high breakout in AI & Semiconductors (2.1x vol)" in md_out
-    assert "Post-earnings selloff / guidance cuts (3.2x vol, AI & Semiconductors)" in md_out
+    assert "Post-earnings reaction / downside volume (3.2x vol, AI & Semiconductors)" in md_out
     assert "Technical Context" in html_out
     assert "52W high breakout in AI & Semiconductors (2.1x vol)" in html_out
 

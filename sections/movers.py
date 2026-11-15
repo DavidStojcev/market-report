@@ -120,7 +120,7 @@ def _generate_movers_theme_summary(
             sec_movers = [f"{get_theme(l)} ({l.symbol})" for l in losers if l.sector == top_sec]
             has_earnings = any(l.has_earnings_in_window for l in losers if l.sector == top_sec)
             if has_earnings:
-                parts.append(f"Losers reflect post-earnings selloff / guidance cuts across {top_sec}: {', '.join(sec_movers)}")
+                parts.append(f"Losers reflect post-earnings downside volume across {top_sec}: {', '.join(sec_movers)}")
             else:
                 parts.append(f"Losers concentrated in {top_sec} sub-industries: {', '.join(sec_movers)}")
         else:
@@ -208,9 +208,9 @@ def _calculate_mover_stats(
 
     if earnings_in_window:
         if pct_change >= 0:
-            catalyst_driver = f"Earnings / guidance catalyst ({vol_ratio:.1f}x vol, {theme_label})"
+            catalyst_driver = f"Post-earnings reaction / upside volume ({vol_ratio:.1f}x vol, {theme_label})"
         else:
-            catalyst_driver = f"Post-earnings selloff / guidance cuts ({vol_ratio:.1f}x vol, {theme_label})"
+            catalyst_driver = f"Post-earnings reaction / downside volume ({vol_ratio:.1f}x vol, {theme_label})"
     elif is_outlier:
         catalyst_driver = cause_tag
     else:

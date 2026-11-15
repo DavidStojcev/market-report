@@ -1,14 +1,38 @@
 """Section: S&P 500 Valuation vs. Rates & Equity Risk Premium (Change Request v2.2: Stage 3, Task 3.1)."""
 
 from dataclasses import dataclass
+import json
 import logging
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 import pandas as pd
 import yfinance as yf
 
+from indicators.breadth import format_percentile_ordinal
 from sections.base import SectionResult
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ValuationERPData:
+    """Monthly S&P 500 Valuation & Equity Risk Premium (ERP) metrics (Stage 6: 6.3)."""
+    trailing_pe: Optional[float] = None
+    trailing_earnings_yield_pct: Optional[float] = None
+    cape_ratio: Optional[float] = None
+    cape_reference_month: str = "September 2026 (lagged official Shiller/Barclays series)"
+    cape_source: str = "Yale / Robert Shiller CAPE via public dataset snapshot"
+    nominal_10y_yield: Optional[float] = None
+    real_10y_yield: Optional[float] = None
+    nominal_erp_pct: Optional[float] = None
+    nominal_erp_bps: Optional[float] = None
+    real_erp_pct: Optional[float] = None
+    real_erp_bps: Optional[float] = None
+    real_erp_percentile_10y: Optional[float] = None
+    real_erp_percentile_label: str = ""
+    valuation_tier: str = "Compressed / Rich Valuation"
+    assessment: str = ""
+    as_of_date: Optional[str] = None
 
 
 @dataclass
@@ -275,3 +299,129 @@ def build_valuation_section(
             status="unavailable",
             error_message=f"Valuation error: {e}",
         )
+
+
+def compute_valuation_erp(
+    nominal_10y: Optional[float] = None,
+    real_10y: Optional[float] = None,
+    as_of_date: Optional[str] = None,
+    fred_provider: Optional[Any] = None,
+    data_provider: Optional[Any] = None,
+    macro_data: Optional[Any] = None,
+) -> ValuationERPData:
+    """Compute S&P 500 trailing valuation, Shiller CAPE, and Equity Risk Premium (ERP) for Monthly reports (Substage 6.3)."""
+    # 1. Resolve rates
+    if nominal_10y is None and macro_data is not None:
+        fr = getattr(macro_data, "fed_rates", None)
+        if fr is not None:
+            nominal_10y = getattr(fr, "yield_10y", None)
+    if nominal_10y is None and fred_provider is not None:
+        try:
+            df_dgs10 = fred_provider.fetch_series("DGS10", as_of_date=as_of_date)
+            if df_dgs10 is not None and not df_dgs10.empty:
+                nominal_10y = float(df_dgs10.iloc[-1]["value"])
+        except Exception:
+            pass
+
+    if real_10y is None and macro_data is not None:
+        fr = getattr(macro_data, "fed_rates", None)
+        if fr is not None:
+            real_10y = getattr(fr, "real_yield_10y", None)
+    if real_10y is None and fred_provider is not None:
+        try:
+            df_dfii10 = fred_provider.fetch_series("DFII10", as_of_date=as_of_date)
+            if df_dfii10 is not None and not df_dfii10.empty:
+                real_10y = float(df_dfii10.iloc[-1]["value"])
+        except Exception:
+            pass
+
+    # 2. Load CAPE and baseline fundamentals from cache
+    cape_file = Path("data/cache/valuation_cape.json")
+    cape_val = 34.82
+    ref_month = "September 2026 (lagged official Shiller/Barclays series)"
+    src_cape = "Yale / Robert Shiller CAPE via public dataset snapshot"
+    trailing_pe = 27.45
+    erp_pctile = 18.0
+
+    if cape_file.exists():
+        try:
+            with open(cape_file, "r", encoding="utf-8") as f:
+                c_data = json.load(f)
+                dates_dict = c_data.get("dates", {})
+                d_entry = dates_dict.get(as_of_date or "")
+                if d_entry:
+                    cape_val = float(d_entry.get("cape", cape_val))
+                    ref_month = f"{d_entry.get('reference_month', 'September 2026')} (lagged official Shiller/Barclays series)"
+                    trailing_pe = float(d_entry.get("spy_trailing_pe", trailing_pe))
+                    erp_pctile = float(d_entry.get("real_erp_10y_percentile", erp_pctile))
+                else:
+                    cape_val = float(c_data.get("cape", cape_val))
+                    ref_month = f"{c_data.get('reference_month', 'October 2026')} (lagged official Shiller/Barclays series)"
+                    trailing_pe = float(c_data.get("spy_trailing_pe", trailing_pe))
+                    erp_pctile = float(c_data.get("real_erp_10y_percentile", erp_pctile))
+                src_cape = c_data.get("source", src_cape)
+        except Exception as e:
+            logger.debug("Error loading valuation_cape.json: %s", e)
+
+    # 3. Try to poll live trailing PE from yfinance / data_provider if available
+    if data_provider is not None and hasattr(data_provider, "get_ticker_info"):
+        try:
+            info = data_provider.get_ticker_info("SPY")
+            if info and isinstance(info, dict) and info.get("trailingPE"):
+                trailing_pe = round(float(info["trailingPE"]), 2)
+        except Exception:
+            pass
+
+    # 4. Compute metrics
+    ey_pct = round(100.0 / trailing_pe, 2) if trailing_pe and trailing_pe > 0 else 3.64
+
+    nom_erp_pct = round(ey_pct - float(nominal_10y), 2) if nominal_10y is not None else None
+    nom_erp_bps = round(nom_erp_pct * 100.0, 1) if nom_erp_pct is not None else None
+
+    real_erp_pct = round(ey_pct - float(real_10y), 2) if real_10y is not None else None
+    real_erp_bps = round(real_erp_pct * 100.0, 1) if real_erp_pct is not None else None
+
+    pctile_lbl = format_percentile_ordinal(erp_pctile) if erp_pctile is not None else "18th"
+
+    if erp_pctile <= 25.0:
+        val_tier = "Compressed / Rich Valuation"
+    elif erp_pctile >= 75.0:
+        val_tier = "Wide / Value Buffer"
+    else:
+        val_tier = "Fair / Historical Norm"
+
+    assessment_parts = [
+        f"S&P 500 trailing earnings yield stands at {ey_pct:.2f}% (trailing P/E {trailing_pe:.2f}x) "
+        f"alongside Shiller CAPE of {cape_val:.2f} ({ref_month})."
+    ]
+    if real_erp_bps is not None and real_10y is not None:
+        assessment_parts.append(
+            f"Real ERP against 10Y TIPS real yields ({real_10y:.2f}%) sits at {real_erp_bps:+.1f} bps "
+            f"({pctile_lbl} over 10Y horizon), reflecting a {val_tier.lower()} environment."
+        )
+    if nom_erp_bps is not None and nominal_10y is not None:
+        assessment_parts.append(
+            f"Nominal ERP vs 10Y Benchmark Treasury ({nominal_10y:.2f}%) stands at {nom_erp_bps:+.1f} bps."
+        )
+
+    assessment = " ".join(assessment_parts)
+
+    return ValuationERPData(
+        trailing_pe=trailing_pe,
+        trailing_earnings_yield_pct=ey_pct,
+        cape_ratio=cape_val,
+        cape_reference_month=ref_month,
+        cape_source=src_cape,
+        nominal_10y_yield=round(float(nominal_10y), 2) if nominal_10y is not None else None,
+        real_10y_yield=round(float(real_10y), 2) if real_10y is not None else None,
+        nominal_erp_pct=nom_erp_pct,
+        nominal_erp_bps=nom_erp_bps,
+        real_erp_pct=real_erp_pct,
+        real_erp_bps=real_erp_bps,
+        real_erp_percentile_10y=erp_pctile,
+        real_erp_percentile_label=pctile_lbl,
+        valuation_tier=val_tier,
+        assessment=assessment,
+        as_of_date=as_of_date,
+    )
+

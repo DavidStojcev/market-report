@@ -393,8 +393,9 @@ def generate_vix_chart(
     as_of_date: str,
     lookback_bars: int = 130,
     output_path: Optional[Path] = None,
+    spx_df: Optional[pd.DataFrame] = None,
 ) -> GeneratedChart:
-    """Generate VIX volatility index line chart with 20 and 25 regime boundaries."""
+    """Generate VIX volatility index line chart with 20 and 25 regime boundaries, optionally plotting 20D Realized Vol (VRP)."""
     chart_key = "vix_regime"
     title = "Cboe Volatility Index (VIX) — Regime & Risk Thresholds"
     caption = f"Trailing implied volatility levels with 20 (cautious) and 25 (elevated fear) boundaries as of {as_of_date}."
@@ -411,10 +412,26 @@ def generate_vix_chart(
         idx = sub.index
         vix_vals = sub["Close"]
 
+        # 20D Realized Volatility calculation if spx_df provided
+        rv20 = None
+        if spx_df is not None and not spx_df.empty and "Close" in spx_df.columns:
+            spx_sub = spx_df[spx_df.index <= curr_dt]
+            if len(spx_sub) >= 21:
+                spx_rets = spx_sub["Close"].pct_change()
+                rolling_rv = (spx_rets.rolling(20).std() * np.sqrt(252) * 100.0).reindex(idx)
+                if not rolling_rv.dropna().empty:
+                    rv20 = rolling_rv
+                    title = "CBOE Volatility & 20D Realized Vol (VRP)"
+                    caption = f"Implied volatility (VIX) vs. 20-day historical realized volatility and regime boundaries as of {as_of_date}."
+
         fig, ax = plt.subplots(figsize=(9, 4.0))
         _apply_neutral_theme(fig, ax)
 
-        ax.plot(idx, vix_vals, color=COLOR_AMBER, linewidth=1.8, label=f"VIX Close ({vix_vals.iloc[-1]:.2f})")
+        ax.plot(idx, vix_vals, color=COLOR_AMBER, linewidth=1.8, label=f"VIX Implied ({vix_vals.iloc[-1]:.2f})")
+        if rv20 is not None:
+            last_rv = float(rv20.dropna().iloc[-1])
+            ax.plot(idx, rv20, color="#60a5fa", linewidth=1.4, linestyle="--", label=f"20D Realized Vol ({last_rv:.2f}%)")
+
         ax.axhline(20, color=COLOR_YELLOW, linestyle="--", linewidth=1.0, alpha=0.7, label="Cautious Boundary (20.0)")
         ax.axhline(25, color=COLOR_RED, linestyle="--", linewidth=1.0, alpha=0.7, label="Elevated Fear (25.0)")
         ax.axhspan(0, 16.5, color=COLOR_GREEN, alpha=0.04)
@@ -422,7 +439,7 @@ def generate_vix_chart(
         ax.axhspan(25, max(35, float(vix_vals.max()) + 2), color=COLOR_RED, alpha=0.06)
 
         ax.set_title(title, color=COLOR_TEXT, fontsize=12, fontweight="bold", pad=10)
-        ax.set_ylabel("Index Level", color=COLOR_MUTED, fontsize=9)
+        ax.set_ylabel("Index Level / Annualized Vol (%)", color=COLOR_MUTED, fontsize=9)
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d" if lookback_bars < 180 else "%b %Y"))
         fig.autofmt_xdate(rotation=20)
         ax.legend(loc="upper right", facecolor="#131b2e", edgecolor=COLOR_SPINE, labelcolor=COLOR_TEXT, fontsize=8)
@@ -887,6 +904,95 @@ def generate_seasonality_heatmap(
         return GeneratedChart(key=chart_key, title=title, caption=caption, is_available=False, error_message=str(e))
 
 
+def generate_net_liquidity_vs_spx_chart(
+    fred_provider: Any,
+    spx_df: Optional[pd.DataFrame],
+    as_of_date: str,
+    lookback_days: int = 365,
+    output_path: Optional[Path] = None,
+) -> GeneratedChart:
+    """Generate 52-week Federal Reserve Net Liquidity (WALCL - TGA - RRP) vs. S&P 500 (^GSPC) chart."""
+    chart_key = "net_liquidity_vs_spx"
+    title = "Fed Net Liquidity vs. S&P 500 (52-Week Trajectory)"
+    caption = f"Comparison of Federal Reserve Net Liquidity (WALCL − TGA − RRP, \\$T) against S&P 500 over 52 weeks as of {as_of_date}."
+
+    if fred_provider is None or spx_df is None or spx_df.empty or "Close" not in spx_df.columns:
+        return GeneratedChart(key=chart_key, title=title, caption=caption, is_available=False, error_message="FRED provider or S&P 500 data unavailable.")
+
+    try:
+        curr_dt = pd.to_datetime(as_of_date)
+        start_dt = curr_dt - pd.Timedelta(days=lookback_days + 45)
+
+        walcl_raw = fred_provider.fetch_series("WALCL", as_of_date=as_of_date) if hasattr(fred_provider, "fetch_series") else None
+        tga_raw = fred_provider.fetch_series("WTREGEN", as_of_date=as_of_date) if hasattr(fred_provider, "fetch_series") else None
+        rrp_raw = fred_provider.fetch_series("RRPONTSYD", as_of_date=as_of_date) if hasattr(fred_provider, "fetch_series") else None
+
+        if walcl_raw is None or tga_raw is None or rrp_raw is None or walcl_raw.empty or tga_raw.empty or rrp_raw.empty:
+            return GeneratedChart(key=chart_key, title=title, caption=caption, is_available=False, error_message="Net liquidity series incomplete.")
+
+        w_df = walcl_raw[walcl_raw["date"] >= start_dt].copy().set_index("date")["value"]
+        t_df = tga_raw[tga_raw["date"] >= start_dt].copy().set_index("date")["value"]
+        r_df = rrp_raw[rrp_raw["date"] >= start_dt].copy().set_index("date")["value"]
+
+        idx = pd.date_range(start=start_dt, end=curr_dt, freq="D")
+        w_d = w_df.reindex(idx).ffill()
+        t_d = t_df.reindex(idx).ffill()
+        r_d = r_df.reindex(idx).ffill()
+
+        # Compute net liquidity in Trillions ($T)
+        net_liq_t = (w_d / 1_000_000.0) - (t_d / 1_000_000.0) - (r_d / 1_000.0)
+        net_liq_t = net_liq_t.dropna()
+
+        spx_close = spx_df[spx_df.index <= curr_dt]["Close"].reindex(idx).ffill().dropna()
+
+        common_idx = net_liq_t.index.intersection(spx_close.index)
+        cutoff_dt = curr_dt - pd.Timedelta(days=lookback_days)
+        common_idx = [d for d in common_idx if d >= cutoff_dt]
+
+        if len(common_idx) < 30:
+            return GeneratedChart(key=chart_key, title=title, caption=caption, is_available=False, error_message="Insufficient overlapping data points.")
+
+        plot_dates = pd.to_datetime(common_idx)
+        liq_vals = net_liq_t.loc[common_idx].values
+        spx_vals = spx_close.loc[common_idx].values
+
+        fig, ax1 = plt.subplots(figsize=(9, 4.4))
+        _apply_neutral_theme(fig, ax1)
+        ax2 = ax1.twinx()
+
+        color_liq = "#26a69a"
+        line1 = ax1.plot(plot_dates, liq_vals, color=color_liq, linewidth=1.8, label=f"Fed Net Liquidity (${liq_vals[-1]:.2f}T)")
+        ax1.set_ylabel("Net Liquidity ($ Trillions)", color=color_liq, fontsize=8)
+        ax1.tick_params(axis="y", labelcolor=color_liq)
+
+        color_spx = "#42a5f5"
+        line2 = ax2.plot(plot_dates, spx_vals, color=color_spx, linewidth=1.8, label=f"S&P 500 ({spx_vals[-1]:,.0f})")
+        ax2.set_ylabel("S&P 500 Index", color=color_spx, fontsize=8)
+        ax2.tick_params(axis="y", labelcolor=color_spx)
+        ax2.grid(False)
+
+        lines = line1 + line2
+        labels = [l.get_label() for l in lines]
+        ax1.legend(lines, labels, loc="upper left", facecolor="#131b2e", edgecolor=COLOR_SPINE, labelcolor=COLOR_TEXT, fontsize=8)
+
+        ax1.set_title(title, color=COLOR_TEXT, fontsize=12, fontweight="bold", pad=10)
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+        fig.autofmt_xdate(rotation=20)
+
+        b64, svg = _encode_fig(fig, output_path)
+        return GeneratedChart(
+            key=chart_key,
+            title=title,
+            caption=caption,
+            file_path=str(output_path) if output_path else None,
+            base64_data=b64,
+            svg_content=svg,
+        )
+    except Exception as e:
+        logger.warning("Failed to generate Net Liquidity vs SPX chart: %s", e)
+        return GeneratedChart(key=chart_key, title=title, caption=caption, is_available=False, error_message=str(e))
+
+
 def generate_all_report_charts(
     period: PeriodInfo,
     core_bars: Dict[str, pd.DataFrame],
@@ -957,6 +1063,7 @@ def generate_all_report_charts(
         as_of_date=period.session_date,
         lookback_bars=lookback_bars,
         output_path=p_vix,
+        spx_df=core_bars.get("^GSPC"),
     )
     charts_dict["vix_regime"] = c_vix
 
@@ -1012,6 +1119,18 @@ def generate_all_report_charts(
             output_path=p_seas,
         )
         charts_dict["seasonality_heatmap"] = c_seas
+
+        if period.report_type == "monthly":
+            # 11. Net Liquidity vs S&P 500
+            p_liq = (charts_dir / "net_liquidity_vs_spx.png") if charts_dir else None
+            c_liq = generate_net_liquidity_vs_spx_chart(
+                fred_provider=fred_provider,
+                spx_df=core_bars.get("^GSPC") if "^GSPC" in core_bars else core_bars.get("SPY"),
+                as_of_date=period.session_date,
+                lookback_days=365,
+                output_path=p_liq,
+            )
+            charts_dict["net_liquidity_vs_spx"] = c_liq
 
     logger.info("Generated %d chart visualizations in %s", len(charts_dict), charts_dir)
     return charts_dict

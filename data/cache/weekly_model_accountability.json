@@ -40,14 +40,14 @@
     "posture": "DEFENSIVE",
     "ranges": {
       "CL=F": {
-        "close": 88.56,
-        "range_high": 102.95,
-        "range_low": 82.79
+        "close": 88.92,
+        "range_high": 103.13,
+        "range_low": 82.97
       },
       "GC=F": {
-        "close": 3886.3,
-        "range_high": 4122.45,
-        "range_low": 3797.8
+        "close": 3887.6,
+        "range_high": 4123.1,
+        "range_low": 3798.45
       },
       "IWM": {
         "close": 277.54,

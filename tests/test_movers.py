@@ -165,7 +165,7 @@ def test_timeframe_decluttering_in_renders():
     html_monthly = render_html(period=p_monthly, sections=[sec_movers])
 
     # Monthly report must display Monthly Movers, and NOT Daily or Final Week Movers
-    assert "### Monthly Movers" in md_monthly
+    assert "### Monthly Top Movers (S&P 500 + Nasdaq-100)" in md_monthly or "### Monthly Movers" in md_monthly
     assert "### Final Week Movers" not in md_monthly
     assert "### Daily Movers" not in md_monthly
     assert "Monthly Universe Movers" in html_monthly

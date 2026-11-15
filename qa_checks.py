@@ -833,16 +833,25 @@ def check_u1_reading_time_budget(
             details.append(
                 f"Visible words outside <details>: {visible_word_count} (budget: <= {budget} words, WEEKLY)"
             )
+    elif report_type == "monthly":
+        budget = 4500
+        if visible_word_count > budget:
+            details.append(
+                f"Reading-time budget exceeded for MONTHLY: {visible_word_count} visible words outside <details> (budget: <= {budget} words)"
+            )
+        else:
+            details.append(
+                f"Visible words outside <details>: {visible_word_count} (budget: <= {budget} words, MONTHLY)"
+            )
     else:
-        # Stage 6 will restructure Monthly; report word count with generous provisional guard
-        budget = 20000
+        budget = 5000
         if visible_word_count > budget:
             details.append(
                 f"Reading-time budget exceeded for {report_type.upper()}: {visible_word_count} visible words outside <details> (budget: <= {budget} words)"
             )
         else:
             details.append(
-                f"Visible words outside <details>: {visible_word_count} (provisional budget: <= {budget} words, {report_type.upper()})"
+                f"Visible words outside <details>: {visible_word_count} (budget: <= {budget} words, {report_type.upper()})"
             )
 
     status = "FAIL" if any("exceeded" in d for d in details) else "PASS"

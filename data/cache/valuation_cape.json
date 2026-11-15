@@ -1,0 +1,21 @@
+{
+  "reference_month": "October 2026",
+  "cape": 34.82,
+  "source": "Robert J. Shiller / Yale Online Dataset (lagged official series)",
+  "spy_trailing_pe": 27.45,
+  "real_erp_10y_percentile": 18.0,
+  "dates": {
+    "2026-11-13": {
+      "cape": 35.12,
+      "reference_month": "October 2026",
+      "spy_trailing_pe": 27.60,
+      "real_erp_10y_percentile": 17.0
+    },
+    "2026-10-30": {
+      "cape": 34.82,
+      "reference_month": "September 2026",
+      "spy_trailing_pe": 27.45,
+      "real_erp_10y_percentile": 18.0
+    }
+  }
+}

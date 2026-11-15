@@ -442,7 +442,7 @@ def test_2_4_movers_technical_context_and_earnings_window():
         earnings_in_window=True,
     )
     assert m_earn is not None
-    assert m_earn.catalyst_driver.startswith("Post-earnings selloff / guidance cuts")
+    assert m_earn.catalyst_driver.startswith("Post-earnings reaction / downside volume")
 
     # Full build_movers window check using StubCalendarProvider
     cal = MarketCalendar()

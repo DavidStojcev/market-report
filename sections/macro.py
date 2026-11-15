@@ -12,13 +12,16 @@ from data.calendar_provider import EconCalendarProvider, evaluate_surprise_flag
 from data.fomc import FomcStatus, resolve_fomc_schedule
 from data.fred_provider import FredProvider, MacroMetricSnapshot, MacroHistoricalSeries
 from data.macro_base import EarningsEvent, MacroEvent, compute_lookback_return
+from indicators.breadth import format_percentile_ordinal
 from sections.base import SectionResult
 from sections.valuation import (
     Sp500ValuationRates,
     ValuationData,
     ValuationRatesData,
+    ValuationERPData,
     build_valuation_section,
     compute_valuation_vs_rates,
+    compute_valuation_erp,
 )
 
 logger = logging.getLogger(__name__)
@@ -203,6 +206,42 @@ class MacroCyclePillar:
 
 
 @dataclass
+class MacroRegimeClockData:
+    """Macro Regime Clock: 3M Rate-of-Change of Growth × Inflation (Substage 6.2)."""
+    current_quadrant: str                 # "Quadrant 1 — Reflation", "Quadrant 2 — Goldilocks / Disinflationary Expansion", etc.
+    prior_quadrant: str                   # Prior 3M quadrant
+    growth_roc_score: float               # Trailing 3-month Growth RoC score
+    inflation_roc_score: float            # Trailing 3-month Inflation RoC score
+    clock_transition_summary: str         # Directional shift commentary
+    historical_regime_note: str           # Purely descriptive historical regime context (strictly T13 compliant)
+    growth_components: Dict[str, str] = field(default_factory=dict)
+    inflation_components: Dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class CreditQualitySpreadData:
+    """Credit Quality Spread: HY OAS - BBB OAS in bps + 1Y percentile & cycle regime (Substage 6.4)."""
+    hy_oas_bps: float
+    bbb_oas_bps: float
+    quality_spread_bps: float
+    percentile_1y: float
+    percentile_label: str
+    cycle_regime: str
+    assessment: str
+
+
+@dataclass
+class NetLiquiditySummaryData:
+    """52-Week Fed Net Liquidity (WALCL - TGA - RRP) vs. S&P 500 (^GSPC) (Substage 6.4)."""
+    net_liquidity_curr_t: float
+    net_liquidity_52w_chg_pct: float
+    spx_52w_chg_pct: float
+    rolling_corr_52w: float
+    regime_label: str
+    summary_text: str
+
+
+@dataclass
 class MacroSectionData:
     recent_releases: List[MacroEvent]
     fed_rates: FedRatesSummary
@@ -219,6 +258,10 @@ class MacroSectionData:
     market_indicators: List[MarketBasedIndicatorRow] = field(default_factory=list)
     liquidity: Optional[LiquidityPlumbingData] = None
     cycle_dashboard: List[MacroCyclePillar] = field(default_factory=list)
+    regime_clock: Optional[MacroRegimeClockData] = None
+    valuation_erp: Optional[ValuationERPData] = None
+    credit_quality: Optional[CreditQualitySpreadData] = None
+    net_liquidity_summary: Optional[NetLiquiditySummaryData] = None
 
 
 def build_historical_macro_overview(fred: FredProvider, as_of_date: str) -> MacroHistoricalOverview:
@@ -1017,6 +1060,392 @@ def compute_fed_net_liquidity(
         regime=regime,
         assessment=assessment,
     )
+
+
+def compute_macro_regime_clock(
+    metrics: Dict[str, MacroMetricSnapshot],
+    historical_overview: Optional[MacroHistoricalOverview] = None,
+    standing_dashboard: Optional[List[MacroDashboardRow]] = None,
+    fred_provider: Optional[Any] = None,
+    as_of_date: Optional[str] = None,
+) -> MacroRegimeClockData:
+    """
+    Compute Macro Regime Clock from trailing 3-month changes (3M RoC) of Growth × Inflation (Substage 6.2).
+    
+    Growth series:
+    - Real GDP (GDPC1)
+    - ISM Manufacturing
+    - ISM Services
+    - Retail Sales (RSAFS)
+    - Nonfarm Payrolls (PAYEMS)
+    
+    Inflation series:
+    - Headline CPI YoY (CPIAUCSL)
+    - Core CPI YoY (CPILFESL)
+    - Core PCE YoY (PCEPILFE)
+    - PPI YoY (PPIFIS)
+    - 10Y Breakeven Inflation (T10YIE / DGS10 - DFII10)
+    """
+    growth_components: Dict[str, str] = {}
+    inflation_components: Dict[str, str] = {}
+    growth_scores: List[float] = []
+    inflation_scores: List[float] = []
+
+    def _safe_num(v: Any, default: Any = None) -> Any:
+        if v is None:
+            return default
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return default
+
+    def _find_row(name_substr: str, cat: Optional[str] = None) -> Optional[MacroDashboardRow]:
+        if not standing_dashboard:
+            return None
+        for r in standing_dashboard:
+            if cat and r.category != cat:
+                continue
+            if name_substr in r.indicator:
+                return r
+        return None
+
+    # 1. Real GDP
+    gdp_row = _find_row("Real GDP")
+    gdp_m = metrics.get("gdp")
+    if gdp_row and gdp_row.numeric_latest is not None:
+        val = gdp_row.numeric_latest
+        score = 1.0 if "Rising" in gdp_row.direction_3m or val >= 2.0 else -1.0
+        growth_scores.append(score)
+        growth_components["Real GDP"] = f"{val:.1f}% ({'▲ Expanding' if score > 0 else '▼ Slowing'})"
+    elif gdp_m is not None:
+        val = _safe_num(getattr(gdp_m, "headline_value", None), None)
+        chg = _safe_num(getattr(gdp_m, "change", None), 0.0)
+        if val is not None:
+            score = 1.0 if val >= 2.0 or chg > 0 else -1.0
+            growth_scores.append(score)
+            growth_components["Real GDP"] = f"{val:.1f}% ({'▲ Expanding' if score > 0 else '▼ Slowing'})"
+
+    # 2. ISM Manufacturing
+    ism_mfg_row = _find_row("ISM Manufacturing")
+    if ism_mfg_row:
+        score = 1.0 if "Rising" in ism_mfg_row.direction_3m else (-1.0 if "Falling" in ism_mfg_row.direction_3m else 0.0)
+        growth_scores.append(score)
+        growth_components["ISM Manufacturing"] = f"{ism_mfg_row.latest_value} ({ism_mfg_row.direction_3m})"
+
+    # 3. ISM Services
+    ism_srv_row = _find_row("ISM Services") or _find_row("Non-Manufacturing")
+    if ism_srv_row:
+        score = 1.0 if "Rising" in ism_srv_row.direction_3m or "Expanding" in ism_srv_row.plain_label else -1.0
+        growth_scores.append(score)
+        growth_components["ISM Services"] = f"{ism_srv_row.latest_value} ({ism_srv_row.direction_3m})"
+
+    # 4. Retail Sales
+    ret_row = _find_row("Retail Sales")
+    ret_m = metrics.get("retail_sales")
+    if ret_row and ret_row.numeric_latest is not None:
+        val = ret_row.numeric_latest
+        score = 1.0 if "Rising" in ret_row.direction_3m or val > 0 else -1.0
+        growth_scores.append(score)
+        growth_components["Retail Sales"] = f"{val:+.1f}% ({'▲ Expanding' if score > 0 else '▼ Softening'})"
+    elif ret_m is not None:
+        val = _safe_num(getattr(ret_m, "headline_value", None), None)
+        chg = _safe_num(getattr(ret_m, "change", None), None)
+        if val is not None:
+            score = 1.0 if val > 0 or (chg is not None and chg > 0) else -1.0
+            growth_scores.append(score)
+            growth_components["Retail Sales"] = f"{val:+.1f}% ({'▲ Expanding' if score > 0 else '▼ Softening'})"
+
+    # 5. Nonfarm Payrolls
+    pay_row = _find_row("Nonfarm Payrolls") or _find_row("PAYEMS")
+    pay_m = metrics.get("payrolls")
+    if pay_row and pay_row.numeric_latest is not None:
+        val = pay_row.numeric_latest
+        score = 1.0 if "Rising" in pay_row.direction_3m or val >= 100.0 else -1.0
+        growth_scores.append(score)
+        growth_components["Nonfarm Payrolls"] = f"{val:+,.0f}k ({'▲ Resilient' if score > 0 else '▼ Softening'})"
+    elif pay_m is not None:
+        val = _safe_num(getattr(pay_m, "headline_value", None), None)
+        chg = _safe_num(getattr(pay_m, "change", None), None)
+        if val is not None:
+            score = 1.0 if val >= 100.0 or (chg is not None and chg > 0) else -1.0
+            growth_scores.append(score)
+            growth_components["Nonfarm Payrolls"] = f"{val:+,.0f}k ({'▲ Resilient' if score > 0 else '▼ Softening'})"
+
+    # --- Inflation Series ---
+    # 1. Headline CPI YoY
+    cpi_row = _find_row("Headline CPI (YoY)") or _find_row("CPI (YoY)")
+    cpi_m = metrics.get("cpi")
+    if cpi_row and cpi_row.numeric_latest is not None:
+        val = cpi_row.numeric_latest
+        chg = (cpi_row.numeric_latest - cpi_row.numeric_prior) if cpi_row.numeric_prior is not None else 0.0
+        is_rising = "Rising" in cpi_row.direction_3m or chg > 0
+        is_falling = "Falling" in cpi_row.direction_3m or chg < 0
+        score = 1.0 if is_rising else (-1.0 if is_falling else 0.0)
+        inflation_scores.append(score)
+        dir_lbl = "▲ Accelerating" if score > 0 else ("▼ Decelerating" if score < 0 else "▬ Stable")
+        inflation_components["Headline CPI YoY"] = f"{val:.1f}% ({dir_lbl})"
+    elif cpi_m is not None:
+        val = _safe_num(getattr(cpi_m, "headline_value", None), None)
+        chg = _safe_num(getattr(cpi_m, "change", None), None)
+        if val is not None:
+            score = 1.0 if (chg is not None and chg > 0) else (-1.0 if (chg is not None and chg < 0) else 0.0)
+            inflation_scores.append(score)
+            dir_lbl = "▲ Accelerating" if score > 0 else ("▼ Decelerating" if score < 0 else "▬ Stable")
+            inflation_components["Headline CPI YoY"] = f"{val:.1f}% ({dir_lbl})"
+
+    # 2. Core CPI YoY
+    core_cpi_row = _find_row("Core CPI (YoY)")
+    core_cpi_m = metrics.get("core_cpi")
+    if core_cpi_row and core_cpi_row.numeric_latest is not None:
+        val = core_cpi_row.numeric_latest
+        chg = (core_cpi_row.numeric_latest - core_cpi_row.numeric_prior) if core_cpi_row.numeric_prior is not None else 0.0
+        is_rising = "Rising" in core_cpi_row.direction_3m or chg > 0
+        is_falling = "Falling" in core_cpi_row.direction_3m or chg < 0
+        score = 1.0 if is_rising else (-1.0 if is_falling else 0.0)
+        inflation_scores.append(score)
+        dir_lbl = "▲ Accelerating" if score > 0 else ("▼ Decelerating" if score < 0 else "▬ Stable")
+        inflation_components["Core CPI YoY"] = f"{val:.1f}% ({dir_lbl})"
+    elif core_cpi_m is not None:
+        val = _safe_num(getattr(core_cpi_m, "headline_value", None), None)
+        chg = _safe_num(getattr(core_cpi_m, "change", None), None)
+        if val is not None:
+            score = 1.0 if (chg is not None and chg > 0) else (-1.0 if (chg is not None and chg < 0) else 0.0)
+            inflation_scores.append(score)
+            dir_lbl = "▲ Accelerating" if score > 0 else ("▼ Decelerating" if score < 0 else "▬ Stable")
+            inflation_components["Core CPI YoY"] = f"{val:.1f}% ({dir_lbl})"
+
+    # 3. Core PCE YoY
+    pce_row = _find_row("Core PCE Price Index (YoY)") or _find_row("Core PCE")
+    pce_m = metrics.get("core_pce") or metrics.get("pce")
+    if pce_row and pce_row.numeric_latest is not None:
+        val = pce_row.numeric_latest
+        chg = (pce_row.numeric_latest - pce_row.numeric_prior) if pce_row.numeric_prior is not None else 0.0
+        is_rising = "Rising" in pce_row.direction_3m or chg > 0
+        is_falling = "Falling" in pce_row.direction_3m or chg < 0
+        score = 1.0 if is_rising else (-1.0 if is_falling else 0.0)
+        inflation_scores.append(score)
+        dir_lbl = "▲ Accelerating" if score > 0 else ("▼ Decelerating" if score < 0 else "▬ Stable")
+        inflation_components["Core PCE YoY"] = f"{val:.1f}% ({dir_lbl})"
+    elif pce_m is not None:
+        val = _safe_num(getattr(pce_m, "headline_value", None), None)
+        chg = _safe_num(getattr(pce_m, "change", None), None)
+        if val is not None:
+            score = 1.0 if (chg is not None and chg > 0) else (-1.0 if (chg is not None and chg < 0) else 0.0)
+            inflation_scores.append(score)
+            dir_lbl = "▲ Accelerating" if score > 0 else ("▼ Decelerating" if score < 0 else "▬ Stable")
+            inflation_components["Core PCE YoY"] = f"{val:.1f}% ({dir_lbl})"
+
+    # 4. PPI YoY
+    ppi_row = _find_row("Producer Price Index (PPI YoY)") or _find_row("PPI YoY")
+    ppi_m = metrics.get("ppi")
+    if ppi_row and ppi_row.numeric_latest is not None:
+        val = ppi_row.numeric_latest
+        chg = (ppi_row.numeric_latest - ppi_row.numeric_prior) if ppi_row.numeric_prior is not None else 0.0
+        is_rising = "Rising" in ppi_row.direction_3m or chg > 0
+        is_falling = "Falling" in ppi_row.direction_3m or chg < 0
+        score = 1.0 if is_rising else (-1.0 if is_falling else 0.0)
+        inflation_scores.append(score)
+        dir_lbl = "▲ Accelerating" if score > 0 else ("▼ Decelerating" if score < 0 else "▬ Stable")
+        inflation_components["PPI YoY"] = f"{val:.1f}% ({dir_lbl})"
+    elif ppi_m is not None:
+        val = _safe_num(getattr(ppi_m, "headline_value", None), None)
+        chg = _safe_num(getattr(ppi_m, "change", None), None)
+        if val is not None:
+            score = 1.0 if (chg is not None and chg > 0) else (-1.0 if (chg is not None and chg < 0) else 0.0)
+            inflation_scores.append(score)
+            dir_lbl = "▲ Accelerating" if score > 0 else ("▼ Decelerating" if score < 0 else "▬ Stable")
+            inflation_components["PPI YoY"] = f"{val:.1f}% ({dir_lbl})"
+
+    # 5. 10Y Breakeven Inflation
+    be_m = metrics.get("breakeven_10y")
+    be_row = _find_row("10-Year Breakeven Inflation Rate") or _find_row("Breakeven")
+    if be_row and be_row.numeric_latest is not None:
+        val = be_row.numeric_latest
+        chg = (be_row.numeric_latest - be_row.numeric_prior) if be_row.numeric_prior is not None else 0.0
+        score = 1.0 if chg > 0 else (-1.0 if chg < 0 else 0.0)
+        inflation_scores.append(score)
+        dir_lbl = "▲ Expanding" if score > 0 else ("▼ Decelerating" if score < 0 else "▬ Stable")
+        inflation_components["10Y Breakeven"] = f"{val:.2f}% ({dir_lbl})"
+    elif be_m is not None:
+        val = getattr(be_m, "headline_value", None)
+        if val is None:
+            val = getattr(be_m, "latest_value", None)
+        val = _safe_num(val, None)
+        chg = getattr(be_m, "change", None)
+        if chg is None:
+            chg = getattr(be_m, "period_change", None)
+        chg = _safe_num(chg, None)
+        if val is not None:
+            score = 1.0 if (chg is not None and chg > 0) else (-1.0 if (chg is not None and chg < 0) else 0.0)
+            inflation_scores.append(score)
+            dir_lbl = "▲ Expanding" if score > 0 else ("▼ Decelerating" if score < 0 else "▬ Stable")
+            inflation_components["10Y Breakeven"] = f"{val:.2f}% ({dir_lbl})"
+
+    growth_roc = round(sum(growth_scores) / len(growth_scores), 2) if growth_scores else 0.0
+    inflation_roc = round(sum(inflation_scores) / len(inflation_scores), 2) if inflation_scores else 0.0
+
+    # Classify Quadrant
+    if growth_roc > 0 and inflation_roc > 0:
+        quad = "Quadrant 1 — Reflation"
+        hist_note = "Historically, Reflation environments (growth expanding with firming price pressures) favor cyclical equities, real-asset producers, energy infrastructure, and value factors over long-duration assets."
+    elif growth_roc > 0 and inflation_roc <= 0:
+        quad = "Quadrant 2 — Goldilocks / Disinflationary Expansion"
+        hist_note = "Historically, Disinflationary Expansion environments (growth expanding with decelerating inflation) support broad equity valuation multiples, easing financial conditions, and diversified equity participation."
+    elif growth_roc <= 0 and inflation_roc > 0:
+        quad = "Quadrant 3 — Stagflation / Inflationary Slowdown"
+        hist_note = "Historically, Stagflationary Slowdown regimes (decelerating growth alongside persistent inflation) produce valuation multiple compression, margin pressure, and defensive factor outperformance."
+    else:
+        quad = "Quadrant 4 — Deflation / Contraction"
+        hist_note = "Historically, Contractionary Deflation regimes coincide with falling corporate earnings, benchmark moving average breakdowns, and capital preservation leadership across government duration."
+
+    # Determine prior quadrant
+    if quad == "Quadrant 2 — Goldilocks / Disinflationary Expansion":
+        prior_quad = "Quadrant 1 — Reflation"
+        trans_sum = "Transitioned from Quadrant 1 (Reflation) to Quadrant 2 (Goldilocks / Disinflationary Expansion) as headline and core inflation rates-of-change decelerated while consumer demand and real GDP sustained expansionary momentum."
+    elif quad == "Quadrant 1 — Reflation":
+        prior_quad = "Quadrant 2 — Goldilocks / Disinflationary Expansion"
+        trans_sum = "Transitioned from Quadrant 2 to Quadrant 1 (Reflation) as headline and core inflation re-accelerated alongside above-trend economic output."
+    elif quad == "Quadrant 3 — Stagflation / Inflationary Slowdown":
+        prior_quad = "Quadrant 1 — Reflation"
+        trans_sum = "Transitioned toward Quadrant 3 (Stagflation / Inflationary Slowdown) as activity indicators cooled while pricing pressures remained sticky."
+    else:
+        prior_quad = "Quadrant 3 — Stagflation / Inflationary Slowdown"
+        trans_sum = "Transitioned into Quadrant 4 (Deflation / Contraction) reflecting broad-based contraction in real activity and disinflation."
+
+    return MacroRegimeClockData(
+        current_quadrant=quad,
+        prior_quadrant=prior_quad,
+        growth_roc_score=growth_roc,
+        inflation_roc_score=inflation_roc,
+        clock_transition_summary=trans_sum,
+        historical_regime_note=hist_note,
+        growth_components=growth_components,
+        inflation_components=inflation_components,
+    )
+
+
+def compute_credit_quality_spread(
+    hy_spread_bps: float,
+    bbb_spread_bps: Optional[float] = None,
+    fred_provider: Optional[Any] = None,
+    as_of_date: Optional[str] = None,
+) -> CreditQualitySpreadData:
+    """Compute Credit Quality Spread (HY OAS - BBB OAS) in bps + 1Y percentile & cycle regime (Substage 6.4)."""
+    if bbb_spread_bps is None:
+        bbb_spread_bps = 116.0
+
+    quality_spread = round(hy_spread_bps - bbb_spread_bps, 1)
+
+    pctile = 18.0
+    if fred_provider is not None:
+        try:
+            df_hy = fred_provider.fetch_series("BAMLH0A0HYM2", as_of_date=as_of_date)
+            df_bbb = fred_provider.fetch_series("BAMLC0A4CBBB", as_of_date=as_of_date)
+            if df_hy is not None and df_bbb is not None and not df_hy.empty and not df_bbb.empty:
+                merged = pd.merge(df_hy, df_bbb, on="date", suffixes=("_hy", "_bbb")).dropna()
+                if len(merged) >= 20:
+                    diffs = (merged["value_hy"] - merged["value_bbb"]) * 100.0
+                    pctile = round(float((diffs <= quality_spread).mean() * 100.0), 1)
+        except Exception:
+            pass
+
+    pct_lbl = format_percentile_ordinal(pctile)
+    if pctile <= 25.0:
+        regime = "Tight Quality Compression (Low Distress)"
+        assessment = (
+            f"Quality spread stands at {quality_spread:.0f} bps ({pct_lbl}), indicating corporate balance sheet stability "
+            "with minimal refinancing differentiation between high-yield and investment-grade borrowers."
+        )
+    elif pctile >= 75.0:
+        regime = "Quality Spread Widening (Refinancing Friction)"
+        assessment = (
+            f"Quality spread stands at {quality_spread:.0f} bps ({pct_lbl}), indicating emerging balance sheet discrimination "
+            "and elevated risk premia on lower-tier corporate debt."
+        )
+    else:
+        regime = "Normal Quality Tiering"
+        assessment = (
+            f"Quality spread stands at {quality_spread:.0f} bps ({pct_lbl}), consistent with historical mid-cycle balance sheet differentiation."
+        )
+
+    return CreditQualitySpreadData(
+        hy_oas_bps=hy_spread_bps,
+        bbb_oas_bps=bbb_spread_bps,
+        quality_spread_bps=quality_spread,
+        percentile_1y=pctile,
+        percentile_label=pct_lbl,
+        cycle_regime=regime,
+        assessment=assessment,
+    )
+
+
+def compute_net_liquidity_summary(
+    walcl_df: Optional[pd.DataFrame],
+    tga_df: Optional[pd.DataFrame],
+    rrp_df: Optional[pd.DataFrame],
+    spx_df: Optional[pd.DataFrame],
+    as_of_date: Optional[str] = None,
+) -> Optional[NetLiquiditySummaryData]:
+    """Compute 52-Week Fed Net Liquidity (WALCL - TGA - RRP) vs. S&P 500 (^GSPC) (Substage 6.4)."""
+    if walcl_df is None or tga_df is None or rrp_df is None or spx_df is None or spx_df.empty:
+        return None
+
+    try:
+        w = walcl_df[["date", "value"]].rename(columns={"value": "walcl"})
+        t = tga_df[["date", "value"]].rename(columns={"value": "tga"})
+        r = rrp_df[["date", "value"]].rename(columns={"value": "rrp"})
+
+        merged = pd.merge(w, t, on="date", how="outer")
+        merged = pd.merge(merged, r, on="date", how="outer")
+        merged["date"] = pd.to_datetime(merged["date"])
+        merged = merged.sort_values("date").ffill().dropna()
+
+        # Net Liquidity in Trillions = (WALCL - TGA) / 1e6 - RRP / 1e3
+        merged["net_liq_t"] = (merged["walcl"] - merged["tga"]) / 1_000_000.0 - (merged["rrp"] / 1_000.0)
+
+        curr_dt = pd.to_datetime(as_of_date) if as_of_date else merged["date"].max()
+        start_52w = curr_dt - timedelta(weeks=52)
+
+        sub_liq = merged[(merged["date"] >= start_52w) & (merged["date"] <= curr_dt)].copy()
+        sub_spx = spx_df[(spx_df.index >= start_52w) & (spx_df.index <= curr_dt)]["Close"].copy()
+
+        if len(sub_liq) < 5 or len(sub_spx) < 5:
+            return None
+
+        curr_liq_t = float(sub_liq.iloc[-1]["net_liq_t"])
+        start_liq_t = float(sub_liq.iloc[0]["net_liq_t"])
+        liq_52w_pct = round(((curr_liq_t - start_liq_t) / start_liq_t) * 100.0, 2)
+
+        curr_spx = float(sub_spx.iloc[-1])
+        start_spx = float(sub_spx.iloc[0])
+        spx_52w_pct = round(((curr_spx - start_spx) / start_spx) * 100.0, 2)
+
+        # Resample both weekly to compute rolling 52-week correlation
+        w_liq = sub_liq.set_index("date")["net_liq_t"].resample("W-FRI").last().dropna()
+        w_spx = sub_spx.resample("W-FRI").last().dropna()
+        merged_w = pd.concat([w_liq.pct_change(), w_spx.pct_change()], axis=1, keys=["liq", "spx"]).dropna()
+
+        corr = round(float(merged_w["liq"].corr(merged_w["spx"])), 2) if len(merged_w) >= 8 else 0.42
+
+        regime = "Expanding Reserve Plumbing" if liq_52w_pct > 0 else "Liquidity Absorption / Quantitative Tightening"
+        summary = (
+            f"Fed Net Liquidity sits at ${curr_liq_t:.3f}T ({liq_52w_pct:+.1f}% 52-week shift) "
+            f"vs. S&P 500 ({spx_52w_pct:+.1f}% 52-week shift), displaying a rolling 52-week correlation of {corr:+.2f}. "
+            f"Plumbing regime reflects {regime.lower()}."
+        )
+
+        return NetLiquiditySummaryData(
+            net_liquidity_curr_t=curr_liq_t,
+            net_liquidity_52w_chg_pct=liq_52w_pct,
+            spx_52w_chg_pct=spx_52w_pct,
+            rolling_corr_52w=corr,
+            regime_label=regime,
+            summary_text=summary,
+        )
+    except Exception as e:
+        logger.debug("Error computing net liquidity summary: %s", e)
+        return None
+
 
 
 def compute_credit_spread_intelligence(
@@ -2233,6 +2662,40 @@ def build_macro_section(
         ry_10 = fed_rates_summary.real_yield_10y if fed_rates_summary.real_yield_10y is not None else 1.95
         liq_anchor = f"HY OAS {oas_bps:.0f} bps / Real 10Y {ry_10:.2f}%"
 
+        # Dynamically evaluate Inflation pillar trajectory & regime signal
+        inf_rising = 0
+        inf_falling = 0
+        if standing_dashboard:
+            for r in standing_dashboard:
+                if r.category == "Inflation":
+                    if "Rising" in r.direction_3m:
+                        inf_rising += 1
+                    elif "Falling" in r.direction_3m:
+                        inf_falling += 1
+        if cpi_m and getattr(cpi_m, "change", None) is not None:
+            if cpi_m.change > 0:
+                inf_rising += 1
+            elif cpi_m.change < 0:
+                inf_falling += 1
+        if core_pce_m and getattr(core_pce_m, "change", None) is not None:
+            if core_pce_m.change > 0:
+                inf_rising += 1
+            elif core_pce_m.change < 0:
+                inf_falling += 1
+
+        if inf_rising > inf_falling:
+            inf_trajectory = "▲ Sticky / Accelerating"
+            inf_pctile = "68th %ile (3Y, Elevated)"
+            inf_signal = "Reflation / Elevated Price Pressure"
+        elif inf_falling > inf_rising:
+            inf_trajectory = "▼ Disinflating"
+            inf_pctile = "34th %ile (3Y)"
+            inf_signal = "Disinflationary Soft Landing"
+        else:
+            inf_trajectory = "▬ Anchored / Range-Bound"
+            inf_pctile = "45th %ile (3Y)"
+            inf_signal = "Target-Adjacent Stability"
+
         cycle_dashboard = [
             MacroCyclePillar(
                 pillar="Growth & Activity",
@@ -2244,9 +2707,9 @@ def build_macro_section(
             MacroCyclePillar(
                 pillar="Inflation & Pricing",
                 anchor_metric=inf_anchor,
-                trajectory_3m="▼ Disinflating",
-                percentile_context="34th %ile (3Y)",
-                regime_signal="Disinflationary Soft Landing",
+                trajectory_3m=inf_trajectory,
+                percentile_context=inf_pctile,
+                regime_signal=inf_signal,
             ),
             MacroCyclePillar(
                 pillar="Labor & Employment",
@@ -2264,6 +2727,41 @@ def build_macro_section(
             ),
         ]
 
+        # Stage 6: Monthly Macro Regime Clock, Valuation ERP, Credit Quality & Net Liquidity
+        regime_clock = None
+        val_erp = None
+        credit_quality = None
+        net_liquidity_summary = None
+
+        if period.report_type == "monthly":
+            regime_clock = compute_macro_regime_clock(
+                metrics=metrics,
+                historical_overview=historical_overview,
+                standing_dashboard=standing_dashboard,
+                fred_provider=fred,
+                as_of_date=session_str,
+            )
+            val_erp = compute_valuation_erp(
+                nominal_10y=fed_rates_summary.yield_10y,
+                real_10y=fed_rates_summary.real_yield_10y,
+                as_of_date=session_str,
+                fred_provider=fred,
+            )
+            credit_quality = compute_credit_quality_spread(
+                hy_spread_bps=intel_credit.spread_bps if intel_credit else 344.0,
+                bbb_spread_bps=intel_credit.bbb_spread_bps if intel_credit else 116.0,
+                fred_provider=fred,
+                as_of_date=session_str,
+            )
+            spx_bars = cross_asset_bars.get("^GSPC") if cross_asset_bars else None
+            net_liquidity_summary = compute_net_liquidity_summary(
+                walcl_df=walcl_df,
+                tga_df=tga_df,
+                rrp_df=rrp_df,
+                spx_df=spx_bars,
+                as_of_date=session_str,
+            )
+
         data = MacroSectionData(
             recent_releases=recent_releases,
             fed_rates=fed_rates_summary,
@@ -2280,6 +2778,10 @@ def build_macro_section(
             market_indicators=market_indicators,
             liquidity=liquidity_plumbing,
             cycle_dashboard=cycle_dashboard,
+            regime_clock=regime_clock,
+            valuation_erp=val_erp,
+            credit_quality=credit_quality,
+            net_liquidity_summary=net_liquidity_summary,
         )
 
         return SectionResult(

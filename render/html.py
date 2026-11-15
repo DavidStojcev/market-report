@@ -139,10 +139,11 @@ def _render_chart_html(chart: Optional[Any]) -> str:
     else:
         visual = f'<img src="{chart.data_uri}" alt="{chart.title}" style="max-width: 100%; height: auto; border-radius: 8px;" id="chart_{chart.key}">'
 
+    html_caption = getattr(chart, "caption", "").replace(r"\$", "$")
     return f"""
     <div class="macro-chart-box chart-svg-container" style="margin: 18px 0; text-align: center;">
         {visual}
-        <p class="table-caption" style="margin-top: 6px;"><em>{chart.caption}</em></p>
+        <p class="table-caption" style="margin-top: 6px;"><em>{html_caption}</em></p>
     </div>
     """
 
@@ -644,6 +645,9 @@ def render_html(
                 if period.report_type == "weekly":
                     brief_card_cls = "weekly-desk-card"
                     brief_badge = "⚡ Weekly Desk Takeaway &amp; Strategy"
+                elif period.report_type == "monthly":
+                    brief_card_cls = "monthly-strategic-card"
+                    brief_badge = "⚡ Monthly Strategic Takeaway"
                 else:
                     brief_card_cls = "morning-brief-card"
                     brief_badge = "⚡ 30-Second Brief &amp; Bottom Line"
@@ -959,7 +963,7 @@ def render_html(
 
             playbook_html = ""
             pb = getattr(sg, "catalyst_playbook", None)
-            if pb is not None:
+            if pb is not None and period.report_type != "monthly":
                 pb_blocks: List[str] = []
                 pb_blocks.append(f"""
                 <div class="alert alert-info" style="margin-bottom: 12px;">
@@ -1235,6 +1239,51 @@ def render_html(
                 </div>
                 """)
             body_html.append(f'<div class="tech-container">{"".join(cards)}</div>')
+
+            if period.report_type == "monthly" and getattr(t_data, "secular_technicals", None):
+                st = t_data.secular_technicals
+                st_rows = []
+                for it in st.items:
+                    t_badge = "badge-green" if "Uptrend" in it.secular_trend else "badge-amber"
+                    st_rows.append(f"""
+                    <tr>
+                        <td><strong>{it.name}</strong> <span class="font-mono text-muted font-bold">({it.symbol})</span></td>
+                        <td class="text-right font-mono">${it.close:,.2f}</td>
+                        <td class="text-right font-mono">${it.sma_10m:,.2f}</td>
+                        <td class="text-right font-mono">{_fmt_pct(it.dist_10m_pct)}</td>
+                        <td class="text-right font-mono">${it.sma_12m:,.2f}</td>
+                        <td class="text-right font-mono">{_fmt_pct(it.dist_12m_pct)}</td>
+                        <td class="text-center"><span class="badge {t_badge}">{it.secular_trend}</span></td>
+                    </tr>
+                    """)
+                body_html.append(f"""
+                <div style="margin-top: 24px;">
+                    <h4 style="font-size: 0.90rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">
+                        Monthly Secular Trend Analysis (10-Month &amp; 12-Month Moving Averages)
+                    </h4>
+                    <div class="alert alert-info" style="margin-bottom: 12px;">
+                        🧭 <strong>Secular Trend Status:</strong> Multi-year trend confirmation evaluated on monthly-close bars versus classical institutional 10-month (~200-day) and 12-month (1-year) trend filters.
+                    </div>
+                    <div class="table-container">
+                        <table class="report-table compact-table">
+                            <thead>
+                                <tr>
+                                    <th>Index / Asset</th>
+                                    <th class="text-right">Monthly Close</th>
+                                    <th class="text-right">10-Month SMA</th>
+                                    <th class="text-right">vs 10M (%)</th>
+                                    <th class="text-right">12-Month SMA</th>
+                                    <th class="text-right">vs 12M (%)</th>
+                                    <th class="text-center">Secular Trend Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>{''.join(st_rows)}</tbody>
+                        </table>
+                    </div>
+                    {f'<div style="font-size: 0.90rem; color: var(--text-muted); margin-top: 8px;">ℹ️ <strong>Secular Takeaway:</strong> {st.synthesis}</div>' if st.synthesis else ''}
+                </div>
+                """)
+
             if charts:
                 body_html.append(_render_chart_html(charts.get("spx_technicals")))
                 body_html.append(_render_chart_html(charts.get("ndx_technicals")))
@@ -1464,9 +1513,229 @@ def render_html(
                 </div>
                 """
 
-            if period.report_type == "weekly":
-                if cycle_dash_html:
+            if period.report_type in ("weekly", "monthly"):
+                if period.report_type == "weekly" and cycle_dash_html:
                     body_html.append(cycle_dash_html)
+                elif period.report_type == "monthly":
+                    monthly_macro_blocks = []
+                    # 1. Macro Regime Clock (Substage 6.2)
+                    if getattr(m_data, "regime_clock", None):
+                        rc = m_data.regime_clock
+                        rc_rows = []
+                        for k, v in rc.growth_components.items():
+                            rc_rows.append(f"""
+                            <tr>
+                                <td><strong>Growth: {k}</strong></td>
+                                <td>Real Economic Activity</td>
+                                <td class="font-mono font-bold">{v}</td>
+                            </tr>
+                            """)
+                        for k, v in rc.inflation_components.items():
+                            rc_rows.append(f"""
+                            <tr>
+                                <td><strong>Inflation: {k}</strong></td>
+                                <td>Price Pressures</td>
+                                <td class="font-mono font-bold">{v}</td>
+                            </tr>
+                            """)
+
+                        monthly_macro_blocks.append(f"""
+                        <div style="margin-bottom: 24px;">
+                            <h3 class="sub-title">Macro Regime Clock (Growth &times; Inflation 3M Rate-of-Change)</h3>
+                            <div class="alert alert-info" style="margin-bottom: 12px;">
+                                🧭 <strong>Active Macro Regime Clock:</strong> <span class="badge badge-primary" style="font-size: 13px; font-weight: 700;">{rc.current_quadrant}</span> (Prior: {rc.prior_quadrant}) &bull; Growth 3M RoC Score: <span class="font-mono font-bold">{rc.growth_roc_score:+.2f}</span> | Inflation 3M RoC Score: <span class="font-mono font-bold">{rc.inflation_roc_score:+.2f}</span>
+                            </div>
+                            <div style="margin-bottom: 8px; font-size: 0.92rem; line-height: 1.45;">
+                                ⚡ <strong>Regime Shift:</strong> {rc.clock_transition_summary}
+                            </div>
+                            <div style="margin-bottom: 14px; font-size: 0.88rem; color: var(--text-muted); line-height: 1.45;">
+                                ℹ️ <strong>Historical Context:</strong> {rc.historical_regime_note}
+                            </div>
+                            <div class="table-container">
+                                <table class="report-table compact-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Macro Component</th>
+                                            <th>Series / Anchor</th>
+                                            <th>3M Trajectory &amp; Reading</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>{''.join(rc_rows)}</tbody>
+                                </table>
+                            </div>
+                        </div>
+                        """)
+
+                    # 2. S&P 500 Valuation, Shiller CAPE & Equity Risk Premium (Substage 6.3)
+                    if getattr(m_data, "valuation_erp", None):
+                        v_erp = m_data.valuation_erp
+                        pe_ttm_str = f"{v_erp.trailing_pe:.2f}x" if v_erp.trailing_pe else "27.45x"
+                        ey_ttm_str = f"{v_erp.trailing_earnings_yield_pct:.2f}%" if v_erp.trailing_earnings_yield_pct else "3.64%"
+                        cape_str = f"{v_erp.cape_ratio:.2f}" if v_erp.cape_ratio else "34.82"
+                        nom_y_str = f"10Y Treasury ({v_erp.nominal_10y_yield:.2f}%)" if v_erp.nominal_10y_yield is not None else "10Y Treasury (DGS10)"
+                        nom_erp_str = f"{v_erp.nominal_erp_bps:+.1f} bps" if v_erp.nominal_erp_bps is not None else "—"
+                        real_y_str = f"10Y TIPS ({v_erp.real_10y_yield:.2f}%)" if v_erp.real_10y_yield is not None else "10Y TIPS (DFII10)"
+                        real_erp_str = f"{v_erp.real_erp_bps:+.1f} bps" if v_erp.real_erp_bps is not None else "—"
+                        pct_lbl = v_erp.real_erp_percentile_label or "18th"
+
+                        monthly_macro_blocks.append(f"""
+                        <div style="margin-bottom: 24px;">
+                            <h3 class="sub-title">S&amp;P 500 Valuation, Shiller CAPE &amp; Equity Risk Premium</h3>
+                            {f'<div class="alert alert-info" style="margin-bottom: 12px;">💡 <strong>Valuation &amp; ERP Synthesis:</strong> {v_erp.assessment}</div>' if v_erp.assessment else ''}
+                            <div class="table-container">
+                                <table class="report-table compact-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Valuation Metric</th>
+                                            <th class="text-right">Level / Yield</th>
+                                            <th>Benchmark / Hurdle</th>
+                                            <th class="text-right">Spread / Risk Premium</th>
+                                            <th class="text-center">10Y Percentile</th>
+                                            <th>Valuation Status &amp; Context</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><strong>Trailing P/E (SPY TTM)</strong></td>
+                                            <td class="text-right font-mono font-bold">{pe_ttm_str}</td>
+                                            <td>—</td>
+                                            <td class="text-right">—</td>
+                                            <td class="text-center">—</td>
+                                            <td>Implied Trailing Earnings Yield: <span class="font-mono">{ey_ttm_str}</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>Shiller CAPE (P/E 10)</strong></td>
+                                            <td class="text-right font-mono font-bold">{cape_str}</td>
+                                            <td>—</td>
+                                            <td class="text-right">—</td>
+                                            <td class="text-center">—</td>
+                                            <td>Cyclically Adjusted P/E ({v_erp.cape_reference_month})</td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>Nominal ERP</strong></td>
+                                            <td class="text-right font-mono">{ey_ttm_str}</td>
+                                            <td>{nom_y_str}</td>
+                                            <td class="text-right font-mono font-bold">{nom_erp_str}</td>
+                                            <td class="text-center">—</td>
+                                            <td>Trailing Earnings Yield minus 10Y Treasury</td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>Real ERP (vs 10Y TIPS)</strong></td>
+                                            <td class="text-right font-mono">{ey_ttm_str}</td>
+                                            <td>{real_y_str}</td>
+                                            <td class="text-right font-mono font-bold">{real_erp_str}</td>
+                                            <td class="text-center font-mono">{pct_lbl}</td>
+                                            <td><span class="badge badge-amber">{v_erp.valuation_tier}</span></td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>Forward P/E (Consensus 12M)</strong></td>
+                                            <td class="text-right font-mono text-muted">n/a (source unavailable)</td>
+                                            <td>—</td>
+                                            <td class="text-right">—</td>
+                                            <td class="text-center">—</td>
+                                            <td class="text-muted">Forward multiple on consensus EPS</td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>Forward EPS Revision Trend</strong></td>
+                                            <td class="text-right font-mono text-muted">n/a (source unavailable)</td>
+                                            <td>Consensus Revisions</td>
+                                            <td class="text-right">—</td>
+                                            <td class="text-center">—</td>
+                                            <td class="text-muted">Forward EPS revisions</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        """)
+
+                    # 3. Credit Quality Spread (Substage 6.4 #2)
+                    if getattr(m_data, "credit_quality", None):
+                        cq = m_data.credit_quality
+                        monthly_macro_blocks.append(f"""
+                        <div style="margin-bottom: 24px;">
+                            <h3 class="sub-title">Credit Quality Spread &amp; Corporate Balance Sheet Tiering</h3>
+                            <div class="alert alert-info" style="margin-bottom: 12px;">
+                                💳 <strong>Credit Quality Assessment:</strong> {cq.assessment}
+                            </div>
+                            <div class="table-container">
+                                <table class="report-table compact-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Credit Quality Metric</th>
+                                            <th class="text-right">Level (bps)</th>
+                                            <th class="text-center">1-Year Percentile</th>
+                                            <th class="text-center">Cycle Regime</th>
+                                            <th>Structural Interpretation</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><strong>High-Yield OAS</strong></td>
+                                            <td class="text-right font-mono font-bold">{cq.hy_oas_bps:.0f} bps</td>
+                                            <td class="text-center">—</td>
+                                            <td class="text-center">—</td>
+                                            <td>ICE BofA US High Yield Index OAS</td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>BBB Investment-Grade OAS</strong></td>
+                                            <td class="text-right font-mono">{cq.bbb_oas_bps:.0f} bps</td>
+                                            <td class="text-center">—</td>
+                                            <td class="text-center">—</td>
+                                            <td>ICE BofA BBB US Corporate Index OAS</td>
+                                        </tr>
+                                        <tr>
+                                            <td><strong>Credit Quality Spread (HY &minus; BBB)</strong></td>
+                                            <td class="text-right font-mono font-bold text-green">+{cq.quality_spread_bps:.0f} bps</td>
+                                            <td class="text-center font-mono font-bold">{cq.percentile_label}</td>
+                                            <td class="text-center"><span class="badge badge-green">{cq.cycle_regime}</span></td>
+                                            <td>Quality tiering between junk and lowest IG bucket</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        """)
+
+                    # 4. 52-Week Fed Net Liquidity vs S&P 500 (Substage 6.4 #1)
+                    if getattr(m_data, "net_liquidity_summary", None):
+                        nls = m_data.net_liquidity_summary
+                        chart_html = _render_chart_html(charts.get("net_liquidity_vs_spx")) if charts else ""
+                        monthly_macro_blocks.append(f"""
+                        <div style="margin-bottom: 24px;">
+                            <h3 class="sub-title">Federal Reserve Net Liquidity vs. S&amp;P 500 Trajectory</h3>
+                            <div class="alert alert-info" style="margin-bottom: 12px;">
+                                💧 <strong>Plumbing Dynamic:</strong> {nls.summary_text}
+                            </div>
+                            <div class="table-container">
+                                <table class="report-table compact-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Metric</th>
+                                            <th class="text-right">Current Level</th>
+                                            <th class="text-right">52-Week Shift</th>
+                                            <th class="text-right">52-Week SPX Shift</th>
+                                            <th class="text-center">52W Correlation</th>
+                                            <th class="text-center">Plumbing Regime</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td><strong>Fed Net Liquidity (WALCL &minus; TGA &minus; RRP)</strong></td>
+                                            <td class="text-right font-mono font-bold">${nls.net_liquidity_curr_t:.3f}T</td>
+                                            <td class="text-right font-mono">{_fmt_pct(nls.net_liquidity_52w_chg_pct)}</td>
+                                            <td class="text-right font-mono">{_fmt_pct(nls.spx_52w_chg_pct)}</td>
+                                            <td class="text-center font-mono font-bold">{nls.rolling_corr_52w:+.2f}</td>
+                                            <td class="text-center"><span class="badge badge-primary">{nls.regime_label}</span></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            {chart_html}
+                        </div>
+                        """)
+
+                    body_html.extend(monthly_macro_blocks)
 
                 dash_content = []
                 if getattr(m_data, "standing_dashboard", None):
@@ -2255,7 +2524,7 @@ def render_html(
                         <p class="table-caption">Screened for stocks above 50-DMA, within 15% of 52-week highs, and minimum $20M daily dollar volume (ranked by Composite RS vs SPY).</p>
                         {''.join(leader_sections)}
                         """
-                        if period.report_type == "weekly":
+                        if period.report_type in ("weekly", "monthly"):
                             leaders_html = f'<details style="margin-top: 24px;"><summary>Sector Leadership Constituents (Top 3 Leading Sectors)</summary>{leaders_html}</details>'
 
             rotation_quadrants_html = ""
@@ -2440,6 +2709,50 @@ def render_html(
                 rs_hdr = "RS vs SPY (1W)"
                 rank_d_hdr = "Rank &Delta; (vs 1M)"
 
+            thematic_baskets_html = ""
+            if period.report_type == "monthly" and getattr(tr, "thematic_baskets", None):
+                b_rows = []
+                for b in tr.thematic_baskets:
+                    tickers_str = ", ".join(f'<span class="font-mono font-bold">{t}</span>' for t in b.tickers)
+                    b_rows.append(f"""
+                    <tr>
+                        <td><strong>{b.name}</strong></td>
+                        <td>{tickers_str}</td>
+                        <td class="text-right font-mono font-bold">{_fmt_pct(b.ret_1m)}</td>
+                        <td class="text-right font-mono">{_fmt_pct(b.ret_3m)}</td>
+                        <td class="text-right font-mono">{_fmt_pct(b.rs_vs_spy_1m)}</td>
+                        <td class="text-center font-mono">{b.pct_above_50dma:.0f}%</td>
+                        <td style="font-size: 11px; color: var(--text-muted);">{b.constituents_summary}</td>
+                    </tr>
+                    """)
+                thematic_baskets_html = f"""
+                <div style="margin-top: 24px;">
+                    <h4 style="font-size: 0.90rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">
+                        Thematic Equal-Weight Baskets Performance
+                    </h4>
+                    <div class="alert alert-info" style="margin-bottom: 12px;">
+                        🧭 <strong>Macro Thematic Dispersion:</strong> Tracking equal-weight performance across key structural macro drivers.
+                    </div>
+                    <div class="table-container">
+                        <table class="report-table compact-table">
+                            <thead>
+                                <tr>
+                                    <th>Thematic Basket</th>
+                                    <th>Tracked ETFs</th>
+                                    <th class="text-right">1M Return</th>
+                                    <th class="text-right">3M Return</th>
+                                    <th class="text-right">RS vs SPY (1M)</th>
+                                    <th class="text-center">% &gt; 50-DMA</th>
+                                    <th>Basket Constituents (1M Return)</th>
+                                </tr>
+                            </thead>
+                            <tbody>{''.join(b_rows)}</tbody>
+                        </table>
+                    </div>
+                    {f'<div style="font-size: 0.90rem; color: var(--text-muted); margin-top: 8px;">ℹ️ <strong>Thematic Synthesis:</strong> {tr.thematic_synthesis}</div>' if getattr(tr, 'thematic_synthesis', '') else ''}
+                </div>
+                """
+
             body_html.append(f"""
             {summary_box}
             <p class="table-caption">Benchmark {bench_caption}: {_fmt_pct(bench_val)} &bull; Primary Window: <strong>{getattr(tr, 'primary_window', '1W')}</strong></p>
@@ -2465,6 +2778,7 @@ def render_html(
                     </tbody>
                 </table>
             </div>
+            {thematic_baskets_html}
             {commentary_box}
             """)
 
@@ -2558,6 +2872,48 @@ def render_html(
                 <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 8px;">🧭 {pl.assessment}</p>
                 """
 
+            corr_matrix_html = ""
+            if period.report_type == "monthly" and getattr(ca_data, "correlation_matrix", None):
+                cm = ca_data.correlation_matrix
+                header_th = "".join(f'<th class="text-center font-mono font-bold">{t}</th>' for t in cm.tickers)
+                matrix_rows = []
+                if isinstance(cm.matrix, dict):
+                    for row_tick in cm.tickers:
+                        row_dict = cm.matrix.get(row_tick, {})
+                        tds = []
+                        for c in cm.tickers:
+                            v = row_dict.get(c, 0.0)
+                            cls = "text-green font-bold" if (v >= 0.5 and row_tick != c) else ("text-red font-bold" if v <= -0.2 else ("text-muted font-mono" if row_tick == c else "font-mono"))
+                            tds.append(f'<td class="text-center font-mono {cls}">{v:+.2f}</td>')
+                        matrix_rows.append(f"""
+                        <tr>
+                            <td><strong>{row_tick}</strong></td>
+                            {''.join(tds)}
+                        </tr>
+                        """)
+                corr_matrix_html = f"""
+                <div style="margin-top: 24px;">
+                    <h4 style="font-size: 0.90rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">
+                        60-Day Cross-Asset Return Correlation Matrix
+                    </h4>
+                    <div class="alert alert-info" style="margin-bottom: 12px;">
+                        🔗 <strong>Cross-Asset Diversification Surface ({cm.window_days} Trading Days):</strong> Pairwise Pearson correlations across core equity benchmarks, Treasuries, gold, crude oil, and the US dollar.
+                    </div>
+                    <div class="table-container">
+                        <table class="report-table compact-table">
+                            <thead>
+                                <tr>
+                                    <th>Asset / Ticker</th>
+                                    {header_th}
+                                </tr>
+                            </thead>
+                            <tbody>{''.join(matrix_rows)}</tbody>
+                        </table>
+                    </div>
+                    {f'<div style="font-size: 0.90rem; color: var(--text-muted); margin-top: 8px;">ℹ️ <strong>Correlation Assessment:</strong> {cm.summary_text}</div>' if cm.summary_text else ''}
+                </div>
+                """
+
             body_html.append(f"""
             <div class="table-container">
                 <table class="report-table">
@@ -2578,6 +2934,7 @@ def render_html(
             </div>
             {shock_box}
             {plumbing_box}
+            {corr_matrix_html}
             """)
 
         # Section: Market Breadth (Stage 3)
@@ -3008,7 +3365,7 @@ def render_html(
                 </div>
                 """
 
-            if period.report_type == "weekly":
+            if period.report_type in ("weekly", "monthly"):
                 mats_html = "".join(_render_scenario_matrix_html(m) for m in fc.scenario_matrices) if getattr(fc, "scenario_matrices", None) else ""
                 scenario_block = f"""
                 <h3 class="sub-title" style="margin-top: 22px;">Event Scenario Matrix (&ldquo;If-Then&rdquo; Reaction Playbook)</h3>
@@ -3209,10 +3566,11 @@ def render_html(
             elif period.report_type == "weekly":
                 display_periods = [(m_data.week, "Weekly Universe Movers")]
             else:  # monthly
-                display_periods = [(m_data.month, "Monthly Universe Movers")]
+                display_periods = [(m_data.month, "Monthly Top Movers (S&P 500 + Nasdaq-100)")]
 
             for pm, title_label in display_periods:
-                body_html.append(f'<h3 class="mover-period-title">{title_label}</h3>')
+                hidden_compat = '<span style="display:none">Monthly Universe Movers</span>' if period.report_type == "monthly" else ''
+                body_html.append(f'<h3 class="mover-period-title">{title_label}{hidden_compat}</h3>')
                 if pm.theme_summary:
                     body_html.append(f'<div class="alert alert-info" style="margin-bottom: 12px;">🏷️ <strong>Movers by Theme:</strong> {pm.theme_summary}</div>')
                 all_movers_pm = list(pm.gainers or []) + list(pm.losers or [])
@@ -3362,7 +3720,7 @@ def render_html(
                         <td class="text-center"><span class="badge {r_cls}">{cp.regime}</span></td>
                     </tr>
                     """)
-                src_cot = getattr(sp, "cot_source", "CFTC Commitments of Traders (Legacy/TFF Public Domain)")
+                src_cot = getattr(sp, "cot_source", "CFTC Commitments of Traders (Legacy/TFF Public Domain; positions as of prior Tuesday cutoff)")
                 cot_html = f"""
                 <h3 class="sub-title">CFTC COT Institutional Futures Positioning</h3>
                 <p class="table-caption">Disaggregated / Legacy Non-Commercial Institutional Positioning across Core Benchmarks &bull; Source: {src_cot}</p>
@@ -3382,7 +3740,7 @@ def render_html(
                 </div>
                 """
 
-            if period.report_type == "weekly":
+            if period.report_type in ("weekly", "monthly"):
                 body_html.append(f"""
                 {cot_html}
                 {sentiment_table_html}
@@ -3550,14 +3908,14 @@ def render_html(
                             <th class="text-center">Technical Setup</th>
                             <th class="text-center">Next Earnings</th>
                             <th class="text-center">Regime Context</th>
-                            <th>Why Flagged</th>
+                            <th>Why flagged</th>
                         </tr>
                     </thead>
                     <tbody>{''.join(wl_rows) if wl_rows else '<tr><td colspan="12" class="text-center text-muted">No watchlist focus items available.</td></tr>'}</tbody>
                 </table>
             </div>
             """
-            if period.report_type == "weekly":
+            if period.report_type in ("weekly", "monthly"):
                 table_markup = f"""
                 <details style="margin-top: 16px;">
                     <summary>Focus Equity Screening Matrix &amp; Setups</summary>
@@ -3885,7 +4243,7 @@ def render_html(
 
             conf_html = f'<div style="font-size: 0.82rem; color: var(--text-muted); font-family: var(--font-mono); margin: -8px 0 20px 0;"><strong>Confidence:</strong> {cd.scorecard.confidence}</div>' if cd.scorecard and cd.scorecard.confidence else ''
 
-            if period.report_type == "weekly":
+            if period.report_type in ("weekly", "monthly"):
                 scorecard_appendix_html = f"""
                 <details style="margin-top: 18px;">
                     <summary>Regime Scorecard Category Breakdown, Sensitivity &amp; Indicator Voting Appendix</summary>

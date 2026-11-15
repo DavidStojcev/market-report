@@ -20,7 +20,7 @@ from indicators.breadth import format_percentile_ordinal
 
 logger = logging.getLogger(__name__)
 
-COT_DEFAULT_SOURCE = "CFTC Commitments of Traders (Legacy/TFF Public Domain)"
+COT_DEFAULT_SOURCE = "CFTC Commitments of Traders (Legacy/TFF Public Domain; positions as of prior Tuesday cutoff)"
 
 BENCHMARK_CONTRACTS = [
     ("ES", "S&P 500 E-Mini (ES)"),

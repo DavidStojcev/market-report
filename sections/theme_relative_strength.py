@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 from sections.base import SectionResult
@@ -29,6 +29,17 @@ class ThemeItem:
 
 
 @dataclass
+class ThematicBasket:
+    name: str
+    tickers: List[str]
+    ret_1m: float
+    ret_3m: float
+    rs_vs_spy_1m: float
+    pct_above_50dma: float
+    constituents_summary: str = ""
+
+
+@dataclass
 class ThemeRelativeStrengthData:
     as_of_date: str
     spy_1w_return: float
@@ -39,6 +50,62 @@ class ThemeRelativeStrengthData:
     primary_benchmark_return: float = 0.0
     primary_benchmark_label: str = "SPY 1-Week Return"
     spy_1d_return: float = 0.0
+    thematic_baskets: List[ThematicBasket] = field(default_factory=list)
+    thematic_synthesis: str = ""
+
+
+def compute_thematic_baskets(
+    items: List[ThemeItem],
+    spy_1m: float,
+) -> Tuple[List[ThematicBasket], str]:
+    """Compute equal-weight thematic baskets and descriptive summary across tracked ETFs."""
+    basket_defs = [
+        ("AI & Semiconductor Infrastructure", ["SMH", "IGV", "AIQ", "XNTK"]),
+        ("Traditional Energy & Oil Services", ["OIH", "XOP"]),
+        ("Rate-Sensitive Housing & Regional Banks", ["KRE", "XHB"]),
+        ("Defense & Aerospace", ["ITA"]),
+        ("Biotech & Utilities", ["XBI", "XLU"]),
+    ]
+
+    item_map = {it.symbol: it for it in items if it.is_available}
+    baskets: List[ThematicBasket] = []
+
+    for name, tickers in basket_defs:
+        basket_items = [item_map[t] for t in tickers if t in item_map]
+        if not basket_items:
+            continue
+        avg_1m = sum(it.ret_1m for it in basket_items) / len(basket_items)
+        avg_3m = sum(it.ret_3m for it in basket_items) / len(basket_items)
+        rs_spy = avg_1m - spy_1m
+        pct_above_50 = (sum(1 for it in basket_items if it.above_50dma) / len(basket_items)) * 100.0
+        constituents = ", ".join(f"{it.symbol} ({it.ret_1m:+.1f}%)" for it in basket_items)
+        baskets.append(
+            ThematicBasket(
+                name=name,
+                tickers=tickers,
+                ret_1m=round(avg_1m, 2),
+                ret_3m=round(avg_3m, 2),
+                rs_vs_spy_1m=round(rs_spy, 2),
+                pct_above_50dma=round(pct_above_50, 1),
+                constituents_summary=constituents,
+            )
+        )
+
+    baskets.sort(key=lambda b: b.ret_1m, reverse=True)
+
+    if baskets:
+        leading = baskets[0]
+        lagging = baskets[-1]
+        synthesis = (
+            f"Monthly thematic dispersion reflects structural divergence across macro themes: "
+            f"{leading.name} led performance at {leading.ret_1m:+.2f}% ({leading.rs_vs_spy_1m:+.2f}% vs SPY), "
+            f"supported by {leading.pct_above_50dma:.0f}% constituent breadth above the 50-day moving average. "
+            f"Conversely, {lagging.name} lagged at {lagging.ret_1m:+.2f}% ({lagging.rs_vs_spy_1m:+.2f}% vs SPY)."
+        )
+    else:
+        synthesis = ""
+
+    return baskets, synthesis
 
 
 def build_theme_relative_strength(
@@ -259,6 +326,11 @@ def build_theme_relative_strength(
             top_str = ""
             commentary = "Theme ETF market data temporarily unavailable."
 
+        thematic_baskets: List[ThematicBasket] = []
+        thematic_synthesis = ""
+        if is_monthly:
+            thematic_baskets, thematic_synthesis = compute_thematic_baskets(available_items, spy_1m)
+
         data = ThemeRelativeStrengthData(
             as_of_date=as_of_date,
             spy_1w_return=spy_1w,
@@ -269,6 +341,8 @@ def build_theme_relative_strength(
             primary_benchmark_return=primary_bench,
             primary_benchmark_label=bench_label,
             spy_1d_return=spy_1d,
+            thematic_baskets=thematic_baskets,
+            thematic_synthesis=thematic_synthesis,
         )
 
         return SectionResult(
