@@ -313,16 +313,30 @@ def _render_top10_ticker_strip(sections: List[SectionResult], period: Optional[P
             if vix_val is None:
                 vix_val = getattr(data, "vix_level", None)
                 vix_delta = getattr(data, "vix_5d_trend", None)
+            if wti_price is None:
+                for rr in getattr(data, "risk_ranges", []) or []:
+                    if getattr(rr, "symbol", None) == "CL=F":
+                        wti_price = getattr(rr, "current_price", None)
+                        break
         elif isinstance(data, ExecutiveSummaryData):
             exec_num = sec.section_num
             macro_score = data.normalized_score
             macro_regime = data.verdict
             v_low = data.verdict.lower()
             score_class = "text-green" if v_low in ("bullish", "risk-on", "constructive") else ("text-red" if v_low in ("bearish", "risk-off", "cautious") else "text-muted")
+            if vrp is None and getattr(data, "vrp_20d", None) is not None:
+                vrp = data.vrp_20d
+                vrp_regime = "Elevated" if vrp >= 3.0 else ("Discount" if vrp <= -2.0 else "Normal")
+            if wti_price is None and getattr(data, "wti_price", None) is not None:
+                wti_price = data.wti_price
+                wti_3m = getattr(data, "wti_3m", None)
         elif isinstance(data, VolatilityData):
             vol_num = sec.section_num
             vix_val = data.current_level
             vix_delta = data.change
+            if vrp is None and getattr(data, "vrp_20d", None) is not None:
+                vrp = data.vrp_20d
+                vrp_regime = "Elevated" if vrp >= 3.0 else ("Discount" if vrp <= -2.0 else "Normal")
         elif isinstance(data, BreadthSectionData):
             breadth_num = sec.section_num
             breadth_50 = data.result.pct_above_50_dma.current
@@ -414,7 +428,7 @@ def _render_top10_ticker_strip(sections: List[SectionResult], period: Optional[P
         oas_sub = f"{oas_delta:+.0f} bps" if oas_delta is not None else "—"
         oas_c = "text-green" if (oas_delta and oas_delta < 0) else ("text-red" if (oas_delta and oas_delta > 0) else "text-muted")
         vrp_str = f"{vrp:+.1f} pts" if vrp is not None else "n/a"
-        vrp_sub = vrp_regime[:10]
+        vrp_sub = vrp_regime.split("/")[0].strip()
         vrp_c = "text-green" if (vrp and vrp > 2.0) else ("text-red" if (vrp and vrp < 0) else "text-muted")
         wti_str = f"${wti_price:.2f}" if wti_price is not None else "n/a"
         wti_sub = f"{wti_3m:+.2f}% 3M" if wti_3m is not None else "WTI Oil"
@@ -617,7 +631,7 @@ def render_html(
                 </div>
                 """
 
-            conf_badge = f'<div class="score-sub font-mono" style="margin-top: 4px; color: var(--text-muted); font-size: 11px;">{d.confidence}</div>' if d.confidence else ''
+            conf_badge = f'<div class="score-sub font-mono" style="margin-top: 4px; color: rgba(255,255,255,0.75); font-size: 11px;">{d.confidence}</div>' if d.confidence else ''
 
             brief_html = ""
             brief = getattr(d, "brief", None)
@@ -700,10 +714,19 @@ def render_html(
             cotd_html = ""
             cotd = getattr(d, "chart_of_the_day", None)
             if cotd:
+                import base64
+                from pathlib import Path
+                cotd_title = cotd.title if cotd.title.startswith("Chart of the Day:") else f"Chart of the Day: {cotd.title}"
+                cotd_src = cotd.chart_path
+                cotd_file = Path(cotd.chart_path)
+                if cotd_file.is_file():
+                    mime = "image/svg+xml" if cotd_file.suffix.lower() == ".svg" else "image/png"
+                    b64 = base64.b64encode(cotd_file.read_bytes()).decode("ascii")
+                    cotd_src = f"data:{mime};base64,{b64}"
                 cotd_html = f"""
                 <div class="chart-container" style="margin-top: 20px;">
-                    <h4 style="font-size: 14px; font-weight: 700; margin-bottom: 8px;">Chart of the Day: {cotd.title}</h4>
-                    <img src="{cotd.chart_path}" alt="{cotd.title}" class="report-img" style="max-width: 100%; border-radius: 6px; border: 1px solid var(--border);">
+                    <h4 style="font-size: 14px; font-weight: 700; margin-bottom: 8px;">{cotd_title}</h4>
+                    <img src="{cotd_src}" alt="{cotd_title}" class="report-img" style="max-width: 100%; border-radius: 6px; border: 1px solid var(--border);">
                     <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px; font-style: italic;">{cotd.annotation}</div>
                 </div>
                 """
@@ -3476,7 +3499,7 @@ def render_html(
 
                 # Regime context badge
                 if "Outlier Leader" in it.long_permitted or "Exception candidate" in it.long_permitted:
-                    dir_badge = '<span class="badge badge-yellow font-bold">Outlier Leader (Defensive Regime)</span>'
+                    dir_badge = '<span class="badge badge-yellow font-bold" title="Outlier Leader (Defensive Regime)">Outlier Leader</span>'
                 elif any(k in it.long_permitted for k in ("Defensive Regime", "BLOCKED", "INACTIVE")):
                     dir_badge = '<span class="badge badge-red font-bold">DEFENSIVE</span>'
                 elif any(k in it.long_permitted for k in ("Mixed Regime", "SELECTIVE")):
@@ -3485,25 +3508,25 @@ def render_html(
                     dir_badge = '<span class="badge badge-green font-bold">SUPPORTIVE</span>'
 
                 if it.next_earnings_date in ("none within 30d", "n/a (source unavailable)", "n/a"):
-                    earn_badge = f'<span class="text-muted font-mono" style="font-size: 12px;">{it.next_earnings_date}</span>'
+                    earn_text = "None (30d)" if it.next_earnings_date == "none within 30d" else it.next_earnings_date
+                    earn_badge = f'<span class="text-muted font-mono" style="font-size: 12px;">{earn_text}</span>'
                 else:
                     earn_badge = f'<span class="font-mono font-bold" style="font-size: 12px;">{it.next_earnings_date}</span>'
 
                 wl_rows.append(f"""
                 <tr>
-                    <td class="font-mono font-bold" style="color: var(--color-primary);">{it.ticker}</td>
-                    <td>{it.name}</td>
-                    <td><span class="text-muted" style="font-size: 13px;">{it.sector}</span></td>
+                    <td><strong class="font-mono" style="color: var(--color-primary);">{it.ticker}</strong><br><span class="ticker-sub">{it.name}</span></td>
+                    <td><span class="text-muted" style="font-size: 12px;">{it.sector}</span></td>
                     <td class="text-right font-mono">{c_str}</td>
                     <td class="text-right">{d20_str}</td>
                     <td class="text-right">{d50_str}</td>
                     <td class="text-right font-mono">{atr_str}</td>
                     <td class="text-right">{rs_str}</td>
-                    <td class="text-center font-mono" style="font-size: 13px;">{it.sector_breadth_status}</td>
+                    <td class="text-center font-mono" style="font-size: 12px;">{it.sector_breadth_status}</td>
                     <td class="text-center">{readiness_badge}</td>
                     <td class="text-center">{earn_badge}</td>
                     <td class="text-center">{dir_badge}</td>
-                    <td style="font-size: 12px; color: var(--text-muted);">{getattr(it, 'why_flagged', '') or '&mdash;'}</td>
+                    <td style="font-size: 12px; color: var(--text-muted); line-height: 1.35;">{getattr(it, 'why_flagged', '') or '&mdash;'}</td>
                 </tr>
                 """)
 
@@ -3513,11 +3536,10 @@ def render_html(
             
             table_markup = f"""
             <div class="table-container">
-                <table class="report-table">
+                <table class="report-table compact-table watchlist-table">
                     <thead>
                         <tr>
-                            <th>Ticker</th>
-                            <th>Company Name</th>
+                            <th>Asset</th>
                             <th>Sector</th>
                             <th class="text-right">Close</th>
                             <th class="text-right">&Delta; 20-DMA</th>
@@ -3528,10 +3550,10 @@ def render_html(
                             <th class="text-center">Technical Setup</th>
                             <th class="text-center">Next Earnings</th>
                             <th class="text-center">Regime Context</th>
-                            <th>Why flagged</th>
+                            <th>Why Flagged</th>
                         </tr>
                     </thead>
-                    <tbody>{''.join(wl_rows) if wl_rows else '<tr><td colspan="13" class="text-center text-muted">No watchlist focus items available.</td></tr>'}</tbody>
+                    <tbody>{''.join(wl_rows) if wl_rows else '<tr><td colspan="12" class="text-center text-muted">No watchlist focus items available.</td></tr>'}</tbody>
                 </table>
             </div>
             """
@@ -4616,6 +4638,14 @@ def render_html(
         .report-table tbody tr:hover {{ background-color: rgba(236, 164, 0, 0.08); }}
         .report-table tr:last-child td {{ border-bottom: none; }}
         .compact-table td, .compact-table th {{ padding: 8px 10px; font-size: 0.95rem; }}
+        .watchlist-table td, .watchlist-table th {{ padding: 7px 9px; font-size: 0.85rem; vertical-align: middle; }}
+        .watchlist-table th {{ font-size: 0.76rem; line-height: 1.2; }}
+        .watchlist-table td:nth-child(3),
+        .watchlist-table td:nth-child(4),
+        .watchlist-table td:nth-child(5),
+        .watchlist-table td:nth-child(6),
+        .watchlist-table td:nth-child(7),
+        .watchlist-table td:nth-child(10) {{ white-space: nowrap; }}
 
         .ticker-circle {{
             width: 24px;

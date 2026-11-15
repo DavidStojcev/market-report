@@ -56,6 +56,9 @@ class ExecutiveSummaryData:
     brief: Optional[ExecutiveBrief] = None
     posture: str = ""
     chart_of_the_day: Optional[ChartOfTheDay] = None
+    vrp_20d: Optional[float] = None
+    wti_price: Optional[float] = None
+    wti_3m: Optional[float] = None
 
 
 def _cat_by_key(scorecard: Scorecard) -> Dict[str, Any]:

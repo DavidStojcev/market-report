@@ -1057,6 +1057,16 @@ def generate_market_report(
             constituents=constituents,
         )
 
+        if sec_exec and sec_exec.is_available and sec_exec.data:
+            if sec_vol and sec_vol.is_available and sec_vol.data:
+                sec_exec.data.vrp_20d = getattr(sec_vol.data, "vrp_20d", None)
+            if sec_commodities and sec_commodities.is_available and sec_commodities.data:
+                for row in getattr(sec_commodities.data, "items", []) or []:
+                    if getattr(row, "symbol", None) == "CL=F":
+                        sec_exec.data.wti_price = getattr(row, "current_price", None)
+                        sec_exec.data.wti_3m = getattr(row, "ret_3m", None)
+                        break
+
         if is_daily and sec_exec and sec_exec.is_available and sec_exec.data:
             from sections.executive_summary import select_chart_of_the_day
             sec_exec.data.chart_of_the_day = select_chart_of_the_day(
