@@ -1427,11 +1427,21 @@ def compute_net_liquidity_summary(
 
         corr = round(float(merged_w["liq"].corr(merged_w["spx"])), 2) if len(merged_w) >= 8 else 0.42
 
-        regime = "Expanding Reserve Plumbing" if liq_52w_pct > 0 else "Liquidity Absorption / Quantitative Tightening"
+        impulse_4w_t = float(sub_liq.iloc[-1]["net_liq_t"] - sub_liq.iloc[-5]["net_liq_t"]) if len(sub_liq) >= 5 else 0.0
+        if impulse_4w_t < -0.005 and liq_52w_pct > 0:
+            regime = "Draining (4W Impulse) / Expanding YoY"
+            regime_prose = "near-term 4W reserve draining within a positive 52-week trajectory"
+        elif liq_52w_pct > 0:
+            regime = "Expanding Reserve Plumbing"
+            regime_prose = "expanding reserve plumbing"
+        else:
+            regime = "Liquidity Absorption / Quantitative Tightening"
+            regime_prose = "liquidity absorption / quantitative tightening"
+
         summary = (
             f"Fed Net Liquidity sits at ${curr_liq_t:.3f}T ({liq_52w_pct:+.1f}% 52-week shift) "
             f"vs. S&P 500 ({spx_52w_pct:+.1f}% 52-week shift), displaying a rolling 52-week correlation of {corr:+.2f}. "
-            f"Plumbing regime reflects {regime.lower()}."
+            f"Plumbing regime reflects {regime_prose}."
         )
 
         return NetLiquiditySummaryData(

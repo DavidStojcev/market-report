@@ -291,8 +291,8 @@ def build_what_changed(
                 "type": "credit_widening",
                 "score": credit_score,
                 "text": (
-                    f"Corporate Credit Solvency Widening: High-yield OAS spreads widened +{intel.credit.delta_bps:.1f} bps to {intel.credit.spread_bps:.0f} bps, "
-                    f"signaling emerging corporate refinancing frictions and balance sheet pressure."
+                    f"Credit Spread Decompression Impulse: While absolute High-Yield OAS remains historically tight at {intel.credit.spread_bps:.0f} bps, "
+                    f"spreads widened +{intel.credit.delta_bps:.1f} bps over the period alongside lower-tier quality decompression, signaling early refinancing friction."
                 ),
             })
 

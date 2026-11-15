@@ -309,10 +309,17 @@ def check_t5_format_lint(
     """T5: Format lint: no stray suffixes, FX pairs have no '$', amounts have thousands separators, and R2 ordinals/chronology."""
     details: List[str] = []
 
-    # 1. Stray suffixes like 48.60index or 54.90index
+    # 1. Stray suffixes like 48.60index or 54.90index, or literal `nan` / NaN values
     stray_suffix_matches = re.findall(r"\b\d+\.\d+(?:index|kindex|%index)\b", md_content + " " + html_content)
     if stray_suffix_matches:
         details.append(f"Stray unit suffix found in text: {set(stray_suffix_matches)}")
+
+    nan_matches = re.findall(r"`nan`|\bNaN\b|Low\s+`?nan`?|High\s+`?nan`?", md_content + " " + html_content)
+    if nan_matches:
+        details.append(f"Formatted NaN value leaked into report output: {set(nan_matches)}")
+
+    if "+DI 0.0 > -DI 0.0" in md_content or "-DI 0.0 > +DI 0.0" in md_content:
+        details.append("Invalid zero-DI strict inequality (+DI 0.0 > -DI 0.0) found in technicals.")
 
     # 2. FX pairs with dollar sign ($EUR/USD, $USD/JPY, or EUR/USD $1.08)
     fx_dollar_matches = re.findall(r"\$(?:EUR/USD|USD/JPY|GBP/USD|AUD/USD)", md_content + " " + html_content)
@@ -400,9 +407,14 @@ def check_t8_structure_lint(md_content: str, html_content: str, sections: List[S
         if count > 1:
             details.append(f"Duplicate 12+ word sentence detected ({count}x): '{s_txt[:80]}...'")
 
-    # 2. Literal backslash check in HTML (CR v2.3 Item 5)
+    # 2. Literal backslash check in HTML (CR v2.3 Item 5) & balanced <details> tags in Markdown
     if r"\$" in html_content:
         details.append("Literal backslash '\\$' detected in HTML output.")
+
+    open_details = len(re.findall(r"<details>", md_content))
+    close_details = len(re.findall(r"</details>", md_content))
+    if open_details != close_details:
+        details.append(f"Unbalanced <details> tags in Markdown: {open_details} open vs {close_details} close.")
 
     # 3. Cross-reference section number and exact title validation (CR v2.3 Item 6)
     sec_map = {s.section_num: s.title for s in sections}

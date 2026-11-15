@@ -2528,7 +2528,7 @@ def render_html(
                             leaders_html = f'<details style="margin-top: 24px;"><summary>Sector Leadership Constituents (Top 3 Leading Sectors)</summary>{leaders_html}</details>'
 
             rotation_quadrants_html = ""
-            if getattr(s_data, "rotation_quadrants", None):
+            if getattr(s_data, "rotation_quadrants", None) and period.report_type == "weekly":
                 rq_rows = []
                 for rq in s_data.rotation_quadrants:
                     q_badge = "badge-green" if rq.quadrant == "Leading" else ("badge-yellow" if rq.quadrant in ("Weakening", "Improving") else "badge-red")

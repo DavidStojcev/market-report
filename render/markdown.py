@@ -319,7 +319,7 @@ def render_markdown(
                 lines.append(f"- **Model upgrade condition:** {_esc_md_dollar(pt.upgrade_trigger)}")
                 lines.append(f"- **Model downgrade condition:** {_esc_md_dollar(pt.downgrade_trigger)}")
                 lines.append("")
-                if period.report_type in ("daily", "weekly", "monthly"):
+                if period.report_type in ("daily", "weekly"):
                     lines.append("</details>\n")
 
             rr_list = getattr(sg, "risk_ranges", None)
@@ -343,7 +343,7 @@ def render_markdown(
 
             pb = getattr(sg, "catalyst_playbook", None)
             if pb is not None and period.report_type != "monthly":
-                lines.append(f"#### Next 48H Catalyst Playbook (Through {pb.lookahead_date})")
+                lines.append(f"#### Next 48H Catalyst Playbook (Extended Window Through {pb.lookahead_date})")
                 lines.append(f"> ⚡ **Key Tactical Levels:** {_esc_md_dollar(pb.spy_pivot_line)}\n")
                 if pb.execution_takeaway:
                     lines.append(f"- **Desk Playbook Read:** {_esc_md_dollar(pb.execution_takeaway)}")
@@ -359,7 +359,7 @@ def render_markdown(
                         )
                     lines.append("")
                 if pb.earnings_tonight_tomorrow:
-                    lines.append("**Notable S&P 500 Earnings (Tonight AMC / Tomorrow BMO)**")
+                    lines.append(f"**Notable S&P 500 Earnings (Through {pb.lookahead_date})**")
                     lines.append("| Symbol | Company | Release Date | Timing |")
                     lines.append("| :--- | :--- | :---: | :---: |")
                     for er in pb.earnings_tonight_tomorrow:
@@ -856,7 +856,7 @@ def render_markdown(
                     lines.append("</details>\n")
 
             # Stage 5 Substage 5.5: Sector Rotation Quadrants & Weekly Candle Structure
-            if getattr(s_data, "rotation_quadrants", None):
+            if getattr(s_data, "rotation_quadrants", None) and period.report_type == "weekly":
                 lines.append("### Sector Rotation Quadrants & Weekly Candle Structure")
                 lines.append("> 🧭 **10-Week RS vs. Momentum Quadrant:** Categorizes SPDR sectors into Leading, Weakening, Lagging, and Improving regimes alongside weekly OHLC candle structure.\n")
                 lines.append("| Sector | Symbol | 1W Return | 10W RS vs SPY | RS Momentum | Rotation Quadrant | Weekly Candle Structure |")

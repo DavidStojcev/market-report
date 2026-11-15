@@ -81,8 +81,8 @@ def compute_technicals(
         return None
 
     close = sub["Close"]
-    high = sub["High"] if "High" in sub.columns else close
-    low = sub["Low"] if "Low" in sub.columns else close
+    high = sub["High"].fillna(close) if "High" in sub.columns else close
+    low = sub["Low"].fillna(close) if "Low" in sub.columns else close
 
     sma20 = compute_sma(close, dma_fast)
     sma50 = compute_sma(close, dma_medium)
@@ -122,7 +122,12 @@ def compute_technicals(
 
     # Directional Trend Assessment combining ADX with +DI / -DI
     direction = "Bullish" if v_pdi >= v_mdi else "Bearish"
-    di_tag = f"(+DI {v_pdi:.1f} > -DI {v_mdi:.1f})" if v_pdi >= v_mdi else f"(-DI {v_mdi:.1f} > +DI {v_pdi:.1f})"
+    if abs(v_pdi - v_mdi) < 0.05:
+        di_tag = f"(+DI {v_pdi:.1f} ≈ -DI {v_mdi:.1f})"
+    elif v_pdi > v_mdi:
+        di_tag = f"(+DI {v_pdi:.1f} > -DI {v_mdi:.1f})"
+    else:
+        di_tag = f"(-DI {v_mdi:.1f} > +DI {v_pdi:.1f})"
 
     if v_adx < 20.0:
         trend_strength = f"Weak / Ranging {di_tag}"

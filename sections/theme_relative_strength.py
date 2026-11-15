@@ -147,7 +147,7 @@ def build_theme_relative_strength(
         elif is_monthly:
             primary_win = "1M"
             primary_bench = spy_1m
-            bench_label = f"SPY 1-Month ({spy_1m:+.2f}%)"
+            bench_label = f"SPY Rolling 21-Session 1M ({spy_1m:+.2f}%)"
         else:
             primary_win = "1W"
             primary_bench = spy_1w

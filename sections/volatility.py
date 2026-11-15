@@ -133,8 +133,11 @@ def build_volatility(
     start_dt = pd.to_datetime(period.current_start)
     period_slice = sub[(sub.index >= start_dt) & (sub.index <= curr_end_dt)]
     if not period_slice.empty:
-        p_high = float(period_slice["High"].max()) if "High" in period_slice.columns else current_level
-        p_low = float(period_slice["Low"].min()) if "Low" in period_slice.columns else current_level
+        high_s = period_slice["High"].dropna() if "High" in period_slice.columns else pd.Series(dtype=float)
+        low_s = period_slice["Low"].dropna() if "Low" in period_slice.columns else pd.Series(dtype=float)
+        close_s = period_slice["Close"].dropna()
+        p_high = float(high_s.max()) if not high_s.empty else (float(close_s.max()) if not close_s.empty else current_level)
+        p_low = float(low_s.min()) if not low_s.empty else (float(close_s.min()) if not close_s.empty else current_level)
     else:
         p_high = current_level
         p_low = current_level
