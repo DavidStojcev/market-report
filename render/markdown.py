@@ -151,6 +151,25 @@ def _md_anchor(sec_num: int, title: str) -> str:
     return "#" + re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
 
 
+
+def _report_meta(sections: List[SectionResult]) -> Dict[str, Any]:
+    """Data-quality warnings and generation timestamp carried by the footer section."""
+    for s in sections:
+        if isinstance(getattr(s, "data", None), dict) and "data_warnings" in s.data:
+            return {"warnings": list(s.data.get("data_warnings") or []), "generated": s.data.get("generated_at_utc", "")}
+    return {"warnings": [], "generated": ""}
+
+
+def _period_window_label(period: PeriodInfo) -> str:
+    """Honest label for the evaluation window (to-date vs. complete period)."""
+    if period.report_type == "daily":
+        return "1-day session"
+    unit = "Week" if period.report_type == "weekly" else "Month"
+    if period.is_partial:
+        return f"{unit}-to-date ({period.session_count} sessions)"
+    return f"Full {unit.lower()} ({period.session_count} sessions)"
+
+
 def render_markdown(
     period: PeriodInfo,
     sections: List[SectionResult],
@@ -167,9 +186,13 @@ def render_markdown(
     # Title & Metadata
     rep_title = f"{period.report_type.capitalize()} US Market Report"
     lines.append(f"# {rep_title}")
-    lines.append(f"**As of:** `{period.session_date}` | **Period Window:** `{period.current_start}` to `{period.current_end}` | **Evaluation:** US/Eastern")
+    _meta = _report_meta(sections)
+    lines.append(f"**As of:** `{period.session_date}` close | **Period Window:** `{period.current_start}` to `{period.current_end}` ({_period_window_label(period)}, baseline close `{period.baseline_date}`) | **Evaluation:** US/Eastern")
+    lines.append(f"*End-of-day data (Yahoo Finance, FRED); generated {_meta['generated'] or 'n/a'}. Informational research only, not investment advice.*")
     if period.is_partial:
         lines.append(f"> ℹ️ **Partial Period Notice:** {period.notes}")
+    if _meta["warnings"]:
+        lines.append("> ⚠️ **Data Quality Warnings:** " + " | ".join(_meta["warnings"]))
     lines.append("")
     lines.append("---")
     lines.append("")

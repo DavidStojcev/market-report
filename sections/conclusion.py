@@ -253,6 +253,8 @@ def build_footer(
     disclaimer: Optional[str] = None,
     overall_status: str = "PARTIAL",
     missing_inputs: Optional[List[str]] = None,
+    data_warnings: Optional[List[str]] = None,
+    generated_at_utc: Optional[str] = None,
 ) -> SectionResult:
     """Build Footer with legal disclaimer, constituent survivorship bias notice, and Data Quality provenance table."""
     return SectionResult(
@@ -264,5 +266,7 @@ def build_footer(
             "data_sources": data_sources or [],
             "overall_status": overall_status,
             "missing_inputs": missing_inputs or [],
+            "data_warnings": data_warnings or [],
+            "generated_at_utc": generated_at_utc or "",
         },
     )

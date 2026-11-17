@@ -72,6 +72,7 @@ class FedRatesSummary:
     financial_stress: Optional[float] = None
     forward_inflation_5y5y: Optional[float] = None
     forward_inflation_5y5y_delta: Optional[float] = None
+    rates_as_of: Optional[str] = None   # Date of the latest FRED DGS10 observation (FRED lags ~1 business day)
 
 
 @dataclass
@@ -1557,11 +1558,26 @@ def compute_real_rate_intelligence(
     snap_5y5y: Optional[MacroMetricSnapshot] = None,
 ) -> RealRateIntelligence:
     """Decompose nominal 10Y yield into real cost of capital (TIPS), breakeven inflation, and 5Y5Y forward expectations."""
-    real_y = real_snap.latest_value if real_snap else 2.63
+    # If one leg is missing, derive it from the Fisher identity (nominal = real + breakeven)
+    # instead of substituting a hard-coded placeholder level.
     real_d_bps = round((real_snap.period_change if real_snap and real_snap.period_change is not None else 0.0) * 100.0, 1)
-
-    be_y = be_snap.latest_value if be_snap else 2.34
     be_d_bps = round((be_snap.period_change if be_snap and be_snap.period_change is not None else 0.0) * 100.0, 1)
+    if real_snap is not None:
+        real_y = real_snap.latest_value
+    elif be_snap is not None:
+        real_y = round(nominal_10y - be_snap.latest_value, 2)
+        real_d_bps = round((nominal_delta - (be_snap.period_change or 0.0)) * 100.0, 1)
+    else:
+        real_y = None
+    if be_snap is not None:
+        be_y = be_snap.latest_value
+    elif real_snap is not None:
+        be_y = round(nominal_10y - real_snap.latest_value, 2)
+        be_d_bps = round((nominal_delta - (real_snap.period_change or 0.0)) * 100.0, 1)
+    else:
+        be_y = None
+    if real_y is None or be_y is None:
+        raise ValueError("Both 10Y TIPS real yield (DFII10) and 10Y breakeven (T10YIE) are unavailable")
 
     f5y5y_y = snap_5y5y.latest_value if snap_5y5y else None
     f5y5y_d_bps = (
@@ -2397,14 +2413,32 @@ def build_macro_section(
 
         liquidity_plumbing = compute_fed_net_liquidity(walcl_df, tga_df, rrp_df)
 
-        fed_funds_rate = float(dff_df.iloc[-1]["value"]) if dff_df is not None and not dff_df.empty else 4.88
+        # Never substitute placeholder yields/policy rates for missing FRED data: a hard-coded
+        # "10Y 4.25%" would be rendered (and scored) as if it were a real observation.
+        missing_core = [
+            sid for sid, val in (("DFF", dff_df), ("DGS2", snap_2y), ("DGS10", snap_10y))
+            if val is None or (isinstance(val, pd.DataFrame) and val.empty)
+        ]
+        if missing_core:
+            logger.warning("Core FRED rate series unavailable (%s); suppressing macro section.", ", ".join(missing_core))
+            return SectionResult(
+                section_num=4,
+                title="Macro & Economic Events",
+                status="unavailable",
+                error_message=(
+                    f"Core FRED rate series unavailable ({', '.join(missing_core)}); rates, macro releases and "
+                    f"the Rates & Macro score category are omitted rather than shown with placeholder values."
+                ),
+            )
+
+        fed_funds_rate = float(dff_df.iloc[-1]["value"])
         fomc_status = resolve_fomc_schedule(session_str, fed_funds_rate, period_start_date=period.current_start)
 
-        y2 = snap_2y.latest_value if snap_2y else 4.50
-        y2_delta = snap_2y.period_change if snap_2y and snap_2y.period_change is not None else 0.0
+        y2 = snap_2y.latest_value
+        y2_delta = snap_2y.period_change if snap_2y.period_change is not None else 0.0
 
-        y10 = snap_10y.latest_value if snap_10y else 4.25
-        y10_delta = snap_10y.period_change if snap_10y and snap_10y.period_change is not None else 0.0
+        y10 = snap_10y.latest_value
+        y10_delta = snap_10y.period_change if snap_10y.period_change is not None else 0.0
         y10_support, y10_resistance = compute_yield_support_resistance(dgs10_df, y10, lookback_days=63)
         y10_4w = calc_yield_lookback_delta(dgs10_df, 20)
         y10_13w = calc_yield_lookback_delta(dgs10_df, 63)
@@ -2436,6 +2470,7 @@ def build_macro_section(
             yield_2y_delta=y2_delta,
             yield_10y=y10,
             yield_10y_delta=y10_delta,
+            rates_as_of=snap_10y.latest_date,
             spread_2s10s=spread_val,
             spread_2s10s_delta=spread_delta,
             is_inverted=is_inverted,

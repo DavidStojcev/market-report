@@ -175,8 +175,16 @@ def build_fed_path(
 
         # Rates & spreads
         fr = getattr(macro_data, "fed_rates", None) if macro_data else None
-        eff_ff = getattr(fr, "fed_funds_rate", 3.83) if fr else 3.83
-        y2 = getattr(fr, "yield_2y", 4.60) if fr else 4.60
+        if fr is None or getattr(fr, "fed_funds_rate", None) is None or getattr(fr, "yield_2y", None) is None:
+            # Do not fabricate a policy-rate / 2Y backdrop when FRED rates are unavailable.
+            return SectionResult(
+                section_num=9,
+                title="Federal Reserve Policy Path & Monetary Stance",
+                status="unavailable",
+                error_message="Fed funds / 2Y Treasury data (FRED) unavailable; policy-path analysis omitted.",
+            )
+        eff_ff = float(fr.fed_funds_rate)
+        y2 = float(fr.yield_2y)
         spread_2y_ff_bps = (y2 - eff_ff) * 100.0
 
         fomc_status = resolve_fomc_schedule(as_of_date=as_of_date, fed_funds_rate=eff_ff)
@@ -206,7 +214,14 @@ def build_fed_path(
             core_m = metrics.get("cpi")
             core_measure_name = "Headline CPI"
 
-        core_inf = core_m.headline_value if core_m else 3.12
+        if core_m is None:
+            return SectionResult(
+                section_num=9,
+                title="Federal Reserve Policy Path & Monetary Stance",
+                status="unavailable",
+                error_message="Inflation series (PCE/CPI) unavailable; real policy rate cannot be computed without a placeholder.",
+            )
+        core_inf = core_m.headline_value
         real_policy_rate = eff_ff - core_inf
 
         # Synthesis

@@ -2,7 +2,7 @@
 """Automated US Market Report Generator CLI."""
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 from logging.handlers import RotatingFileHandler
 import os
@@ -97,6 +97,89 @@ def _progress(step: int, total: int, emoji: str, msg: str, quiet: bool = False) 
     """Print clean step progress to stdout unless quiet."""
     if not quiet:
         print(f"\n{emoji} [{step}/{total}] {msg}", flush=True)
+
+
+def _stale_or_missing_symbols(symbols: List[str], bars: Dict[str, pd.DataFrame], session_ts: pd.Timestamp) -> List[str]:
+    """Symbols with no bars, or whose last bar on/before the session is older than the session."""
+    out: List[str] = []
+    for sym in symbols:
+        df = bars.get(sym)
+        if df is None or df.empty:
+            out.append(sym)
+            continue
+        sub = df[df.index <= session_ts]
+        if sub.empty or sub.index.max() < session_ts:
+            out.append(sym)
+    return out
+
+
+def collect_data_warnings(
+    period_info: PeriodInfo,
+    core_tickers: List[str],
+    core_bars: Dict[str, pd.DataFrame],
+    equity_tickers: List[str],
+    equity_bars: Dict[str, pd.DataFrame],
+    constituents: List[Constituent],
+    vix_sym: str,
+    sec_macro: Optional[SectionResult] = None,
+) -> List[str]:
+    """Plain-language list of data gaps that the reader must know about (stale/missing feeds, lags).
+
+    A failed incremental download silently falls back to cached bars, so without this check a
+    report built on Wednesday's prices would look identical to a complete Friday report.
+    """
+    warnings_out: List[str] = []
+    session_ts = pd.to_datetime(period_info.session_date)
+    key_syms = ["^GSPC", "^NDX", "^IXIC", "^DJI", "^RUT", vix_sym, "SPY", "QQQ"]
+
+    def _last(sym: str) -> str:
+        df = core_bars.get(sym)
+        if df is None or df.empty:
+            return "no data"
+        sub = df[df.index <= session_ts]
+        return f"last bar {sub.index.max().date()}" if not sub.empty else "no data"
+
+    bad = set(_stale_or_missing_symbols(core_tickers, core_bars, session_ts))
+    bad_key = [s for s in key_syms if s in bad and s in core_tickers]
+    if bad_key:
+        warnings_out.append(
+            f"Headline price data not updated to session {period_info.session_date}: "
+            + ", ".join(f"{s} ({_last(s)})" for s in bad_key)
+            + "; figures for these symbols are not the session close."
+        )
+    bad_other = sorted(bad - set(key_syms))
+    if bad_other:
+        warnings_out.append(
+            f"{len(bad_other)} secondary market symbols stale or missing (e.g. "
+            + ", ".join(f"{s} ({_last(s)})" for s in bad_other[:4]) + ")."
+        )
+    if equity_tickers:
+        eq_bad = _stale_or_missing_symbols(equity_tickers, equity_bars, session_ts)
+        if len(eq_bad) / len(equity_tickers) > 0.02:
+            warnings_out.append(
+                f"Constituent prices: {len(eq_bad)} of {len(equity_tickers)} tickers stale or missing for "
+                f"{period_info.session_date}; they are excluded from breadth and movers."
+            )
+    n_spx = sum(1 for c in constituents if getattr(c, "in_sp500", False))
+    n_ndx = sum(1 for c in constituents if getattr(c, "in_nasdaq100", False))
+    if n_ndx == 0:
+        warnings_out.append("Nasdaq-100 constituent list unavailable: the movers universe is S&P 500 only.")
+    if n_spx < 450:
+        warnings_out.append(
+            f"S&P 500 constituent list incomplete ({n_spx} names, fallback roster); breadth is not index-wide."
+        )
+    if sec_macro is not None:
+        if not sec_macro.is_available:
+            warnings_out.append(f"Macro/rates data unavailable: {sec_macro.error_message or 'FRED feed missing'}")
+        else:
+            fr = getattr(sec_macro.data, "fed_rates", None)
+            as_of = getattr(fr, "rates_as_of", None) if fr else None
+            if as_of and as_of < period_info.session_date:
+                warnings_out.append(
+                    f"FRED Treasury/credit series last observation {as_of} (published with ~1 business-day lag); "
+                    f"yield and spread levels/changes run through {as_of}, not {period_info.session_date}."
+                )
+    return warnings_out
 
 
 def generate_market_report(
@@ -770,9 +853,35 @@ def generate_market_report(
     live_ff_rate = (
         sec_macro.data.fed_rates.fed_funds_rate
         if (sec_macro.is_available and sec_macro.data and getattr(sec_macro.data, "fed_rates", None) and sec_macro.data.fed_rates.fed_funds_rate is not None)
-        else 3.83
+        else None
     )
-    fomc_status = resolve_fomc_schedule(as_of_date=period_info.session_date, fed_funds_rate=float(live_ff_rate))
+    fomc_status = (
+        resolve_fomc_schedule(as_of_date=period_info.session_date, fed_funds_rate=float(live_ff_rate), period_start_date=period_info.current_start)
+        if live_ff_rate is not None
+        else None
+    )
+
+    # ---- Data freshness / completeness audit (drives footer status + header banner) ----
+    data_warnings: List[str] = collect_data_warnings(
+        period_info=period_info,
+        core_tickers=core_tickers,
+        core_bars=core_bars,
+        equity_tickers=equity_tickers,
+        equity_bars=equity_bars,
+        constituents=constituents,
+        vix_sym=vix_sym,
+        sec_macro=sec_macro,
+    )
+    for w in data_warnings:
+        logger.warning("DATA QUALITY: %s", w)
+    _stale_or_missing = set(_stale_or_missing_symbols(core_tickers, core_bars, session_dt))
+    _fr_obj = getattr(sec_macro.data, "fed_rates", None) if (sec_macro.is_available and sec_macro.data) else None
+    _rates_as_of = getattr(_fr_obj, "rates_as_of", None) if _fr_obj else None
+    _rates_lagged = bool(_rates_as_of and _rates_as_of < period_info.session_date)
+    n_spx = sum(1 for c in constituents if getattr(c, "in_sp500", False))
+    n_ndx = sum(1 for c in constituents if getattr(c, "in_nasdaq100", False))
+    yf_status = "PARTIAL" if (_stale_or_missing & ({"^GSPC", "^NDX", "^IXIC", "^DJI", "^RUT", vix_sym, "SPY", "QQQ"} | set(sector_syms))) else "COMPLETE"
+    fred_status = "UNAVAILABLE" if not sec_macro.is_available else ("LAGGED" if _rates_lagged else "COMPLETE")
 
     # Dynamic index volume ratios from index snapshot rows (Bug 1.10)
     ndx_vol_row = next((r for r in sec_indices.data.rows if r.symbol in ("^NDX", "NDX")), None)
@@ -801,21 +910,24 @@ def generate_market_report(
         source_name="Yahoo Finance (yfinance)",
         coverage="Core benchmark indices (^GSPC, ^IXIC, ^NDX, ^DJI, ^RUT, ^VIX), S&P 500 constituent OHLCV bars, cross-asset & proxy ETFs (SPY, QQQ, ONEQ, IWM, RSP, SPDR sectors)",
         fetch_time=f"Session {period_info.session_date}",
-        status="COMPLETE (VERIFIED)",
-        notes=f"Index volume proxies: ^NDX ({ndx_vol_str}), ^IXIC ({ixic_vol_str}), ^RUT ({rut_vol_str}); SPY volume {spy_vol_str} used as broad-market proxy.",
+        status=yf_status,
+        notes=f"End-of-day closes (price return; Close is split-adjusted, not dividend-adjusted). Index volume proxies: ^NDX ({ndx_vol_str}), ^IXIC ({ixic_vol_str}), ^RUT ({rut_vol_str}); SPY volume {spy_vol_str} used as broad-market proxy.",
     )
     fred_source = DataSourceInfo(
         source_name="Federal Reserve Economic Data (FRED)",
         coverage="Treasury Constant Maturity Yields (DGS2, DGS10, T10Y2Y), Effective Fed Funds (DFF), 10Y TIPS (DFII10), 10Y Breakeven (T10YIE), ICE BofA US High Yield OAS (BAMLH0A0HYM2), Macro indicators (CPI, PPI, PCE, GDP, Employment)",
-        fetch_time=f"Baseline {period_info.baseline_date} to {period_info.session_date}",
-        status="COMPLETE (VERIFIED)",
-        notes=f"High-Yield OAS delta and rate shifts computed from unified baseline date {period_info.baseline_date}.",
+        fetch_time=f"Baseline {period_info.baseline_date} to {_rates_as_of or period_info.session_date}",
+        status=fred_status,
+        notes=(
+            f"High-Yield OAS delta and rate shifts computed from unified baseline date {period_info.baseline_date}"
+            + (f"; latest observation {_rates_as_of} (FRED publication lag)." if _rates_lagged else ".")
+        ),
     )
     constituents_source = DataSourceInfo(
         source_name="S&P 500 Constituent Directory",
-        coverage="503 index constituents, GICS sectors, market cap tiers",
-        fetch_time=f"Cached {period_info.session_date}",
-        status="COMPLETE (VERIFIED)",
+        coverage=f"{n_spx} S&P 500 + {n_ndx} Nasdaq-100 flagged constituents ({len(constituents)} unique), GICS sectors",
+        fetch_time=f"Roster used for {period_info.session_date}",
+        status="COMPLETE" if (n_spx >= 450 and n_ndx > 0) else "PARTIAL",
         notes="Constituent roster subject to survivorship bias for historical breadth comparisons.",
     )
 
@@ -827,13 +939,13 @@ def generate_market_report(
                 source_name="CBOE Volatility Term Structure",
                 coverage="VIX9D, VIX 1M, VIX3M, VIX6M, VVIX, SKEW, and 10D/20D/60D Realized Vol & VRP",
                 fetch_time=f"Session {period_info.session_date}",
-                status="COMPLETE (VERIFIED)",
-                notes="Spot VIX, multi-tenor volatility curve, tail-risk surface (VVIX/SKEW), and 20-day realized volatility verified.",
+                status="PARTIAL" if (_stale_or_missing & {vix_sym, vix_3m_sym, "^VIX9D", "^VIX6M", "^VVIX", "^SKEW"}) else "COMPLETE",
+                notes="Spot VIX, multi-tenor volatility curve, tail-risk surface (VVIX/SKEW), and 20-day realized volatility.",
             ),
             constituents_source,
         ]
-        missing_items = []
-        overall_status = "COMPLETE (VERIFIED)"
+        missing_items = list(data_warnings)
+        overall_status = "PARTIAL" if data_warnings else "COMPLETE"
     else:
         data_sources = [
             yf_source,
@@ -841,7 +953,7 @@ def generate_market_report(
                 source_name="Industry & Thematic ETFs",
                 coverage="11 Industry/Theme ETFs (SMH, IGV, AIQ, XNTK, OIH, XOP, XLU, KRE, XHB, XBI, ITA) with RS vs. SPY, rank shifts, and 50-DMA tracking",
                 fetch_time=f"Session {period_info.session_date}",
-                status="COMPLETE (VERIFIED)",
+                status="PARTIAL" if (_stale_or_missing & set(theme_syms)) else "COMPLETE",
                 notes="Evaluated for relative strength leadership and sub-industry momentum.",
             ),
             fred_source,
@@ -849,8 +961,12 @@ def generate_market_report(
                 source_name="Federal Reserve FOMC Official Schedule",
                 coverage="FOMC statement dates, policy decisions, target ranges, vote tallies (2025–2027)",
                 fetch_time=f"As of {period_info.session_date}",
-                status="COMPLETE (VERIFIED)",
-                notes=f"{fomc_status.last_meeting_date} meeting ({fomc_status.outcome_action} {fomc_status.rate_target_range}, vote {fomc_status.vote_count}; {fomc_status.dissents}) identified in-period; next decision scheduled {fomc_status.next_meeting_date}.",
+                status="COMPLETE" if fomc_status is not None else "UNAVAILABLE",
+                notes=(
+                    f"Last meeting {fomc_status.last_meeting_date} ({fomc_status.outcome_action}, vote {fomc_status.vote_count}; {fomc_status.dissents})"
+                    f"{' occurred in this period' if fomc_status.occurred_in_period else ' (before this period)'}; next decision scheduled {fomc_status.next_meeting_date}."
+                    if fomc_status is not None else "Effective fed funds unavailable (FRED); FOMC status not resolved."
+                ),
             ),
             DataSourceInfo(
                 source_name="Economic Calendar & Official Schedules",
@@ -883,7 +999,7 @@ def generate_market_report(
             )
         )
         data_sources.append(constituents_source)
-        missing_items = []
+        missing_items = list(data_warnings)
         if not has_fed_probs:
             missing_items.append("CME FedWatch rate probabilities (n/a - source unavailable)")
         missing_items.extend([
@@ -896,6 +1012,8 @@ def generate_market_report(
         data_sources=data_sources,
         overall_status=overall_status,
         missing_inputs=missing_items,
+        data_warnings=data_warnings,
+        generated_at_utc=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
     )
 
     if is_daily and sec_indices.is_available and sec_indices.data:

@@ -154,6 +154,9 @@ def _calculate_mover_stats(
     sub = df[df.index <= curr_dt]
     if sub.empty or len(sub) < 5:
         return None
+    # Stale feed (no bar for the session): the 'current' close would be from an earlier day.
+    if sub.index.max() < curr_dt:
+        return None
 
     curr_bar = sub.iloc[-1]
     close = float(curr_bar["Close"])

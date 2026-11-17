@@ -1,5 +1,6 @@
 """Self-contained HTML report generator with inline CSS and light/dark mode."""
 
+import html
 from typing import Any, Dict, List, Optional
 from data.calendar import PeriodInfo
 from indicators.breadth import format_percentile_ordinal
@@ -529,6 +530,25 @@ def _render_top10_ticker_strip(sections: List[SectionResult], period: Optional[P
     """
 
 
+
+def _report_meta(sections: List[SectionResult]) -> Dict[str, Any]:
+    """Data-quality warnings and generation timestamp carried by the footer section."""
+    for s in sections:
+        if isinstance(getattr(s, "data", None), dict) and "data_warnings" in s.data:
+            return {"warnings": list(s.data.get("data_warnings") or []), "generated": s.data.get("generated_at_utc", "")}
+    return {"warnings": [], "generated": ""}
+
+
+def _period_window_label(period: PeriodInfo) -> str:
+    """Honest label for the evaluation window (to-date vs. complete period)."""
+    if period.report_type == "daily":
+        return "1-day session"
+    unit = "Week" if period.report_type == "weekly" else "Month"
+    if period.is_partial:
+        return f"{unit}-to-date ({period.session_count} sessions)"
+    return f"Full {unit.lower()} ({period.session_count} sessions)"
+
+
 def render_html(
     period: PeriodInfo,
     sections: List[SectionResult],
@@ -544,14 +564,13 @@ def render_html(
         jump_options.append(f'<option value="#section-{s.section_num}">{s.section_num}. {clean_title}</option>')
 
     rep_type_label = period.report_type.upper()
-    if period.report_type == "daily":
-        trailing_text = "Trailing 1-day session"
-    elif period.report_type == "weekly":
-        trailing_text = "Trailing 1-week"
-    elif period.report_type == "monthly":
-        trailing_text = "Trailing 1-month"
-    else:
-        trailing_text = f"Trailing {period.report_type}"
+    trailing_text = _period_window_label(period).capitalize() + f" from the {period.baseline_date} close"
+    _meta = _report_meta(sections)
+    _warn_html = (
+        '<div class="alert alert-warning" style="margin-top: 12px;">⚠️ <strong>Data Quality Warnings:</strong><ul style="margin: 6px 0 0 18px;">'
+        + "".join(f"<li>{html.escape(w)}</li>" for w in _meta["warnings"])
+        + "</ul></div>"
+    ) if _meta["warnings"] else ""
 
     sidebar_html = _render_sidebar(period, sections)
     top10_html = _render_top10_ticker_strip(sections, period=period)
@@ -584,7 +603,9 @@ def render_html(
         <p style="font-size: 0.95rem; color: var(--text-muted); max-width: 650px; margin: 0; line-height: 1.5;">
             Comprehensive analysis of equities, macro conditions, and systemic risk. {trailing_text} to {period.session_date}.
         </p>
+        <p style="font-size: 0.78rem; color: var(--text-muted); margin: 6px 0 0 0;">End-of-day data (Yahoo Finance, FRED) &bull; generated {html.escape(_meta['generated'] or 'n/a')} &bull; informational research only, not investment advice.</p>
         {f'<div class="alert alert-info" style="margin-top: 12px;">ℹ️ <strong>Partial Period:</strong> {period.notes}</div>' if period.is_partial else ''}
+        {_warn_html}
     </header>
     """
 

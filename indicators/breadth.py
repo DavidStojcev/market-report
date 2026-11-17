@@ -253,6 +253,11 @@ def compute_market_breadth(
         if len(sub) < min_bars:
             insufficient_tickers.append(sym)
             continue
+        # Exclude names whose feed did not update to the session: forward-filling a stale close
+        # would count them as 'unchanged' and silently dilute A/D and %-above-MA readings.
+        if sub.index.max() < curr_dt:
+            insufficient_tickers.append(sym)
+            continue
 
         closes_dict[sym] = sub["Close"]
 

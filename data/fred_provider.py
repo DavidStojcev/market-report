@@ -362,10 +362,19 @@ class FredProvider:
         # Period start lookup
         period_change = None
         period_start_val = prev
+        lag_note = ""
         if period_start_date:
             dt_start = pd.to_datetime(period_start_date)
             p_slice = df[df["date"] <= dt_start]
-            if not p_slice.empty:
+            latest_dt = pd.to_datetime(df.iloc[-1]["date"])
+            if not p_slice.empty and latest_dt <= dt_start and len(df) >= 2:
+                # FRED publishes daily rates/credit series with a lag of ~1 business day, so on a
+                # daily report the newest observation is often the baseline itself.  Measuring
+                # baseline -> baseline would print a spurious "+0.0 bps"; report the latest
+                # observation-to-observation change instead and flag it as lagged.
+                period_change = curr - prev
+                lag_note = f" (lagged: no observation after {dt_start.date()} yet; change is {df.iloc[-2]['date'].date()} -> {latest_dt.date()})"
+            elif not p_slice.empty:
                 period_start_val = float(p_slice.iloc[-1]["value"])
                 period_change = curr - period_start_val
 
@@ -384,7 +393,7 @@ class FredProvider:
             change=curr - prev,
             period_start_value=period_start_val,
             period_change=period_change,
-            notes=f"Current: {curr:.2f}%, Period Δ: {period_change:+.2f}%",
+            notes=f"Current: {curr:.2f}%, Period Δ: {period_change:+.2f}%{lag_note}",
         )
 
     @staticmethod

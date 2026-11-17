@@ -391,26 +391,29 @@ def build_commodities_cross_asset(
         metrics = getattr(macro_data, "metrics", {}) if macro_data else {}
         cpi_m = metrics.get("cpi")
         core_cpi_m = metrics.get("core_cpi")
-        headline_cpi = cpi_m.headline_value if cpi_m else 4.02
-        core_cpi = core_cpi_m.headline_value if core_cpi_m else 3.71
-        gap = headline_cpi - core_cpi
+        has_cpi = cpi_m is not None and core_cpi_m is not None
+        headline_cpi = cpi_m.headline_value if cpi_m else float("nan")
+        core_cpi = core_cpi_m.headline_value if core_cpi_m else float("nan")
+        gap = (headline_cpi - core_cpi) if has_cpi else 0.0
 
         is_shock = abs(oil_3m_ret) >= 15.0
         if oil_3m_ret >= 15.0:
             assess = (
                 f"Energy Shock Warning: Trailing 3-month crude oil has surged {oil_3m_ret:+.2f}%. "
-                f"Rising energy input costs have pushed headline CPI ({headline_cpi:.2f}%) {gap:+.2f}% above core CPI ({core_cpi:.2f}%), "
-                f"constraining central bank easing capacity."
+                + (f"Headline CPI ({headline_cpi:.2f}%) sits {gap:+.2f}% vs core CPI ({core_cpi:.2f}%); higher energy input costs can constrain central bank easing capacity."
+                   if has_cpi else "CPI data unavailable to gauge pass-through to headline inflation.")
             )
         elif oil_3m_ret <= -15.0:
             assess = (
                 f"Energy Deflation Tailwinds: Trailing 3-month crude oil has declined {oil_3m_ret:+.2f}%. "
-                f"Energy price compression provides disinflationary relief, narrowing the headline/core CPI gap to {gap:+.2f}%."
+                + (f"Energy price compression is a disinflationary input; headline/core CPI gap {gap:+.2f}%."
+                   if has_cpi else "CPI data unavailable to gauge pass-through to headline inflation.")
             )
         else:
             assess = (
                 f"Neutral Energy Baseline: Crude oil trailing 3-month change sits at {oil_3m_ret:+.2f}%. "
-                f"Energy markets are providing neither inflationary shocks nor deflationary tailwinds, keeping the headline vs. core gap at {gap:+.2f}%."
+                + (f"Energy markets are providing neither inflationary shocks nor deflationary tailwinds; headline vs. core CPI gap {gap:+.2f}%."
+                   if has_cpi else "CPI data unavailable to gauge the headline vs. core gap.")
             )
 
         energy_shock = EnergyShockIndicator(
