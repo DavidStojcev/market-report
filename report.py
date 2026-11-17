@@ -319,7 +319,7 @@ def generate_market_report(
 
     # 4. Technical calculations
     _progress(3, 6, "📊", "Computing technical indicators, breadth, and macro intelligence...", quiet=quiet)
-    scoring_engine = TrendScoringEngine(cfg.scoring)
+    scoring_engine = TrendScoringEngine(cfg.scoring, cfg.scorecard_categories)
     spx_snap = None
     ndx_snap = None
 
@@ -375,6 +375,7 @@ def generate_market_report(
             elif len(v_sub) >= 2:
                 vix_prev = float(v_sub.iloc[-2]["Close"])
 
+    vix_feed_ok = vix_df is not None and not vix_df.empty and not vix_df[vix_df.index <= session_dt].empty
     vix_3m_curr: Optional[float] = None
     vix3m_df = core_bars.get(vix_3m_sym)
     if vix3m_df is not None and not vix3m_df.empty:
@@ -528,8 +529,8 @@ def generate_market_report(
     if spx_snap:
         scorecard = scoring_engine.compute_scorecard(
             spx_snapshot=spx_snap,
-            vix_current=vix_curr,
-            vix_previous=vix_prev,
+            vix_current=vix_curr if vix_feed_ok else None,
+            vix_previous=vix_prev if vix_feed_ok else None,
             ndx_snapshot=ndx_snap,
             macro_data=sec_macro.data if sec_macro.is_available else None,
             macro_scoring_cfg=cfg.macro.scoring,

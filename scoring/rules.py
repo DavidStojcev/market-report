@@ -690,13 +690,20 @@ def evaluate_volatility_risk_category(
     """
     votes: List[IndicatorVote] = []
 
+    # VIX feed missing: score the category on term structure / credit only (no placeholder VIX).
+    vix_ok = vix_current is not None and vix_previous is not None
+    if not vix_ok:
+        vix_current = vix_previous = 0.0
     # 1. VIX Level (gradient: +1.0 at VIX 12, 0.0 at VIX 18, -1.0 at VIX 30; Fix 1.6)
-    if vix_current <= 18.0:
+    if not vix_ok:
+        pass
+    elif vix_current <= 18.0:
         s_vix_lvl = round(max(0.0, min(1.0, (18.0 - vix_current) / (18.0 - 12.0))), 2)
     else:
         s_vix_lvl = round(max(-1.0, min(0.0, -(vix_current - 18.0) / (30.0 - 18.0))), 2)
 
-    votes.append(IndicatorVote(
+    if vix_ok:
+      votes.append(IndicatorVote(
         rule_name="Volatility: VIX Absolute Level",
         condition=f"VIX at {vix_current:.2f} (gradient score: {s_vix_lvl:+.2f})",
         vote=s_vix_lvl,
@@ -715,7 +722,8 @@ def evaluate_volatility_risk_category(
         vix_interp = "Volatility expanding / hedging surge (bearish)"
     else:
         vix_interp = "Volatility stable / steady hedging conditions (neutral)"
-    votes.append(IndicatorVote(
+    if vix_ok:
+      votes.append(IndicatorVote(
         rule_name="Volatility: VIX Period Shift",
         condition=f"VIX period Δ {vix_delta:+.2f} pts (gradient score: {s_vix_trend:+.2f})",
         vote=s_vix_trend,

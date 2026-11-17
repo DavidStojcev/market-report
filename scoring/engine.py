@@ -340,7 +340,7 @@ class TrendScoringEngine:
         # Borderline evaluation: within 0.03 of a band edge (Stage 1: 1.3)
         is_borderline = False
         borderline_label = ""
-        if abs(normalized_score - r_caut) <= 0.03 or abs(normalized_score - (-0.10)) <= 0.03:
+        if abs(normalized_score - r_caut) <= 0.03:
             is_borderline = True
             borderline_label = "Borderline Neutral / Cautious"
         elif abs(normalized_score - r_const) <= 0.03:
@@ -401,6 +401,22 @@ class TrendScoringEngine:
         total_active = len(active_categories)
         confidence = f"Agreement: {agree_count} of {total_active} active categories match the verdict"
 
+        # Conflict disclosure: a directional verdict with a material category pointing hard the
+        # other way (e.g. index up while most stocks fall) must not read as a clean signal.
+        conflict_note = ""
+        if abs(normalized_score) >= r_const:
+            opposing = [
+                c for c in active_categories
+                if c.weight >= 0.15 and c.score * normalized_score < 0 and abs(c.score) >= 0.40
+            ]
+            if opposing:
+                opp_txt = ", ".join(f"{c.name} {c.score:+.2f}" for c in opposing)
+                conflict_note = (
+                    f"Conflicting signals: {opp_txt} points the opposite way to the {verdict} verdict "
+                    f"(score {normalized_score:+.2f}); treat the verdict as low-conviction."
+                )
+                confidence = f"{confidence}; LOW CONVICTION - {opp_txt} opposes"
+
         # Flatten all component votes for detail table
         all_votes: List[IndicatorVote] = []
         for c in categories:
@@ -421,6 +437,8 @@ class TrendScoringEngine:
 
         if div_note:
             caution_flags.append(div_note)
+        if conflict_note:
+            caution_flags.insert(0, conflict_note)
 
         # Bullish and bearish factor ranking across ALL categories (Fix 1.2)
         cat_name_map = {
@@ -460,6 +478,8 @@ class TrendScoringEngine:
         summary_reasons.append(
             f"Overall market regime is {regime_desc} with a normalized score of {normalized_score:+.2f} [{confidence}]."
         )
+        if conflict_note:
+            summary_reasons.append(conflict_note)
         if spx_snapshot.price > spx_snapshot.dma_50:
             summary_reasons.append(f"S&P 500 trades {spx_snapshot.price_vs_dma50_pct:+.2f}% above its 50-day moving average ({spx_snapshot.dma_50:,.1f}).")
         else:
@@ -468,12 +488,15 @@ class TrendScoringEngine:
         summary_reasons.append(
             f"MACD momentum indicator sits at {spx_snapshot.macd:.2f} ({'above' if spx_snapshot.macd >= spx_snapshot.macd_signal else 'below'} signal line {spx_snapshot.macd_signal:.2f})."
         )
-        vix_daily_implied = vix_current / 15.8745
-        vix_regime_label = "Low / Complacent" if vix_current < 16.5 else ("Normal" if vix_current <= 20.0 else ("Elevated / Caution" if vix_current <= 26.0 else "High Fear"))
-        vix_dir = "rising" if (vix_current - vix_previous) > 0.5 else ("falling" if (vix_current - vix_previous) < -0.5 else "steady")
-        summary_reasons.append(
-            f"Volatility regime: VIX closed at {vix_current:.2f} ({vix_current - vix_previous:+.2f} period change; {vix_regime_label} & {vix_dir}, ±{vix_daily_implied:.2f}% implied daily move)."
-        )
+        if vix_current is None or vix_previous is None:
+            summary_reasons.append("Volatility regime: VIX data unavailable; VIX inputs excluded from the score.")
+        else:
+            vix_daily_implied = vix_current / 15.8745
+            vix_regime_label = "Low / Complacent" if vix_current < 16.5 else ("Normal" if vix_current <= 20.0 else ("Elevated / Caution" if vix_current <= 26.0 else "High Fear"))
+            vix_dir = "rising" if (vix_current - vix_previous) > 0.5 else ("falling" if (vix_current - vix_previous) < -0.5 else "steady")
+            summary_reasons.append(
+                f"Volatility regime: VIX closed at {vix_current:.2f} ({vix_current - vix_previous:+.2f} period change; {vix_regime_label} & {vix_dir}, ±{vix_daily_implied:.2f}% implied daily move)."
+            )
 
         if div_note:
             summary_reasons.append(div_note)
