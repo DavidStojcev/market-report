@@ -199,7 +199,14 @@ class YFinanceDataProvider(DataProvider):
 
         # 2. Fetch incremental delta for stale tickers
         if stale_tickers:
-            recent_start = (target_end - pd.Timedelta(days=15)).strftime("%Y-%m-%d")
+            # Start the incremental window inside the cached range so (a) there is no gap when the
+            # cache is more than 15 days old and (b) overlapping bars reveal split re-adjustments.
+            oldest_cached_max = min(
+                (self.cache.read_bars(t, interval=interval).index.max() for t in stale_tickers),
+                default=target_end,
+            )
+            recent_start_ts = min(target_end - pd.Timedelta(days=15), oldest_cached_max - pd.Timedelta(days=7))
+            recent_start = recent_start_ts.strftime("%Y-%m-%d")
             logger.info("Fetching incremental update for %d cached tickers (%s to %s)", len(stale_tickers), recent_start, end_date)
             for i in range(0, len(stale_tickers), self.batch_size):
                 chunk = stale_tickers[i : i + self.batch_size]

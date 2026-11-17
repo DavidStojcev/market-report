@@ -12,7 +12,12 @@ STANDARD_SPLIT_FACTORS = (2.0, 3.0, 4.0, 5.0, 10.0, 15.0, 20.0, 0.5, 1.0 / 3.0, 
 
 
 def _repair_split_discontinuities(df: pd.DataFrame, ticker: str = "") -> pd.DataFrame:
-    """Detect and back-adjust unadjusted stock/ETF split jumps in cached OHLCV bars."""
+    """Heuristic split back-adjustment from price jumps (NOT used by the cache anymore).
+
+    A ~50% one-day crash or ~100% gain is indistinguishable from a 2:1 split by price alone, so
+    this rewrote genuine moves.  Kept for callers/tests that use it explicitly on known-unadjusted
+    data; the cache uses `_rebase_to_provider_adjustment` instead.
+    """
     if df is None or df.empty or len(df) < 2 or "Close" not in df.columns:
         return df
 
@@ -62,6 +67,39 @@ def _repair_split_discontinuities(df: pd.DataFrame, ticker: str = "") -> pd.Data
     return repaired
 
 
+def _rebase_to_provider_adjustment(existing: pd.DataFrame, fresh: pd.DataFrame, ticker: str = "") -> pd.DataFrame:
+    """Rescale cached bars when the provider has re-adjusted history (split / reverse split).
+
+    Yahoo returns split-adjusted closes for whatever window is downloaded, so after a split the
+    freshly downloaded bars are on a different scale from bars cached before the split.  Bars
+    that exist in BOTH frames give the exact adjustment factor; it is applied to the cached bars
+    only.  Unlike guessing splits from price jumps, this never rewrites a genuine large move.
+    """
+    if existing is None or existing.empty or fresh is None or fresh.empty:
+        return existing
+    common = existing.index.intersection(fresh.index)
+    if len(common) == 0 or "Close" not in existing.columns or "Close" not in fresh.columns:
+        return existing
+    old_c = pd.to_numeric(existing.loc[common, "Close"], errors="coerce")
+    new_c = pd.to_numeric(fresh.loc[common, "Close"], errors="coerce")
+    ratio = (old_c / new_c).replace([np.inf, -np.inf], np.nan).dropna()
+    ratio = ratio[ratio > 0]
+    if ratio.empty:
+        return existing
+    factor = float(ratio.median())
+    # Ignore tiny differences (revisions, rounding); require consistency across the overlap.
+    if abs(factor - 1.0) <= 0.02 or float((ratio / factor - 1.0).abs().max()) > 0.02:
+        return existing
+    logger.info("Rescaling cached bars for %s by 1/%.4f to match provider's re-adjusted history (split)", ticker or "<df>", factor)
+    out = existing.copy()
+    for col in ("Open", "High", "Low", "Close", "Adj Close"):
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce") / factor
+    if "Volume" in out.columns:
+        out["Volume"] = pd.to_numeric(out["Volume"], errors="coerce") * factor
+    return out
+
+
 class ParquetCache:
     """Manages disk caching of ticker bar data in Parquet format."""
 
@@ -99,8 +137,6 @@ class ParquetCache:
                 df.index = df.index.tz_convert(None).normalize()
             else:
                 df.index = df.index.normalize()
-
-            df = _repair_split_discontinuities(df, ticker=ticker)
 
             if start_date:
                 df = df[df.index >= pd.to_datetime(start_date)]
@@ -144,13 +180,13 @@ class ParquetCache:
                     else:
                         existing.index = existing.index.normalize()
 
+                    existing = _rebase_to_provider_adjustment(existing, clean_df, ticker=ticker)
                     clean_df = pd.concat([existing, clean_df])
                     clean_df = clean_df[~clean_df.index.duplicated(keep="last")]
                     clean_df = clean_df.sort_index()
                 except Exception as ex:
                     logger.debug("Could not merge existing parquet cache for %s: %s", ticker, ex)
 
-            clean_df = _repair_split_discontinuities(clean_df, ticker=ticker)
             clean_df.to_parquet(path, engine="pyarrow", index=True)
         except Exception as e:
             logger.warning("Error writing cache for %s: %s", ticker, e)
