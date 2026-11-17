@@ -3587,7 +3587,7 @@ def render_html(
             elif period.report_type == "weekly":
                 display_periods = [(m_data.week, "Weekly Universe Movers")]
             else:  # monthly
-                display_periods = [(m_data.month, "Monthly Top Movers (S&P 500 + Nasdaq-100)")]
+                display_periods = [(m_data.month, f"{'Month-to-Date' if period.is_partial else 'Monthly'} Top Movers ({getattr(m_data, 'universe_label', 'S&P 500 + Nasdaq-100')})")]
 
             for pm, title_label in display_periods:
                 hidden_compat = '<span style="display:none">Monthly Universe Movers</span>' if period.report_type == "monthly" else ''

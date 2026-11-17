@@ -74,8 +74,9 @@ def test_substage_6_1_monthly_movers_header():
     md = Path(res["markdown"]).read_text(encoding="utf-8")
     html = Path(res["html"]).read_text(encoding="utf-8")
 
-    assert "Monthly Top Movers (S&P 500 + Nasdaq-100)" in md
-    assert "Monthly Top Movers (S&P 500 + Nasdaq-100)" in html
+    # Label reflects the universe actually screened (S&P 500 only when the Nasdaq-100 roster is unavailable)
+    assert "Monthly Top Movers (S&P 500" in md
+    assert "Monthly Top Movers (S&P 500" in html
     assert "Daily Movers" not in md
 
 

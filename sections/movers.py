@@ -45,6 +45,21 @@ class TopMoversData:
     day: PeriodMovers
     week: PeriodMovers
     month: PeriodMovers
+    universe_label: str = "S&P 500 + Nasdaq-100"
+    universe_size: int = 0
+
+
+def movers_universe_label(constituents: List[Constituent]) -> str:
+    """Describe the universe that was actually screened (not the one intended)."""
+    has_spx = any(getattr(c, "in_sp500", False) for c in constituents)
+    has_ndx = any(getattr(c, "in_nasdaq100", False) for c in constituents)
+    if has_spx and has_ndx:
+        return "S&P 500 + Nasdaq-100"
+    if has_spx:
+        return "S&P 500 only; Nasdaq-100 list unavailable"
+    if has_ndx:
+        return "Nasdaq-100 only; S&P 500 list unavailable"
+    return "fallback roster"
 
 
 def _fmt_mcap(mcap: float) -> str:
@@ -344,9 +359,11 @@ def build_movers(
             confirmed = [it for it in items if not getattr(it, "is_unconfirmed_outlier", False)]
             if not confirmed:
                 confirmed = items
-            sorted_items = sorted(confirmed, key=lambda x: x.pct_change, reverse=True)
-            gainers = sorted_items[:top_n]
-            losers = sorted_items[-top_n:][::-1]
+            sorted_items = sorted(confirmed, key=lambda x: (x.pct_change, x.symbol), reverse=True)
+            # A "loser" must actually be down (and a "gainer" up): on a broad rally the bottom 5
+            # can all be positive, which the table would otherwise present as decliners.
+            gainers = [it for it in sorted_items if it.pct_change > 0][:top_n]
+            losers = [it for it in reversed(sorted_items) if it.pct_change < 0][:top_n]
             return gainers, losers
 
         d_gainers, d_losers = extract_top(day_items)
@@ -371,7 +388,7 @@ def build_movers(
         if not d_gainers and not w_gainers and not m_gainers:
             return SectionResult(
                 section_num=6,
-                title="Top Movers (S&P 500 + Nasdaq-100)",
+                title=f"Top Movers ({movers_universe_label(constituents)})",
                 status="unavailable",
                 error_message="Insufficient filtered equity mover data.",
             )
@@ -380,11 +397,13 @@ def build_movers(
             day=PeriodMovers("Daily", d_gainers, d_losers, theme_summary=_generate_movers_theme_summary(d_gainers, d_losers)),
             week=PeriodMovers("Weekly", w_gainers, w_losers, theme_summary=_generate_movers_theme_summary(w_gainers, w_losers)),
             month=PeriodMovers("Monthly", m_gainers, m_losers, theme_summary=_generate_movers_theme_summary(m_gainers, m_losers)),
+            universe_label=movers_universe_label(constituents),
+            universe_size=len(day_items),
         )
 
         return SectionResult(
             section_num=6,
-            title="Top Movers (S&P 500 + Nasdaq-100)",
+            title=f"Top Movers ({movers_universe_label(constituents)})",
             status="available",
             data=data,
         )
@@ -392,7 +411,7 @@ def build_movers(
         logger.warning("Error building top movers section: %s", e)
         return SectionResult(
             section_num=6,
-            title="Top Movers (S&P 500 + Nasdaq-100)",
+            title=f"Top Movers ({movers_universe_label(constituents)})",
             status="unavailable",
             error_message=f"Error processing movers: {e}",
         )

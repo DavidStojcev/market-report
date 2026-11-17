@@ -232,7 +232,7 @@ class YFinanceDataProvider(DataProvider):
             "symbol": ticker,
             "shortName": ticker,
             "sector": "Unknown",
-            "marketCap": 10000000000,
+            "marketCap": 0,  # unknown -> shown as n/a; never a fabricated $10B
             "regularMarketPrice": 0.0,
         }
 
@@ -271,7 +271,7 @@ class YFinanceDataProvider(DataProvider):
                     try:
                         res[t] = fut.result()
                     except Exception:
-                        res[t] = {"symbol": t, "shortName": t, "sector": "Unknown", "marketCap": 10000000000}
+                        res[t] = {"symbol": t, "shortName": t, "sector": "Unknown", "marketCap": 0}
             self._save_info_cache()
 
         return res

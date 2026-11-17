@@ -138,13 +138,19 @@ class ConstituentManager:
         soup = BeautifulSoup(res.text, "html.parser")
         table = soup.find("table", {"id": "constituents"})
         if not table:
-            # Look for table with ticker column
+            # Look for a table whose HEADER row has a Ticker/Symbol column (not any table mentioning it)
             for t in soup.find_all("table", {"class": "wikitable"}):
-                if "Ticker" in t.text or "Symbol" in t.text:
+                first = t.find("tr")
+                hdr = [th.get_text(strip=True).lower() for th in first.find_all("th")] if first else []
+                if any(h in ("ticker", "symbol") for h in hdr):
                     table = t
                     break
 
         constituents = {}
+        if table is not None:
+            hdr = [th.get_text(strip=True).lower() for th in table.find_all("tr")[0].find_all("th")]
+            if not any(h in ("ticker", "symbol") for h in hdr):
+                table = None
         if table:
             for row in table.find_all("tr")[1:]:
                 cols = row.find_all("td")
@@ -212,9 +218,18 @@ class ConstituentManager:
             logger.warning("Web scraping constituents failed: %s; using fallback dataset", e)
 
         if not scraped_ok:
-            for item in FALLBACK_CONSTITUENTS:
-                sym = item["symbol"]
-                universe_dict[sym] = Constituent(**item)
+            # An expired cache of the real roster beats the 66-name fallback.
+            if self.cache_file.exists():
+                try:
+                    with open(self.cache_file, "r", encoding="utf-8") as f:
+                        stale = [Constituent(**item) for item in json.load(f)]
+                    if len(stale) > 400:
+                        logger.warning("Constituent scrape failed; using expired cached roster (%d names)", len(stale))
+                        return stale
+                except Exception as e:
+                    logger.warning("Error reading expired constituents cache: %s", e)
+            logger.warning("Constituent scrape failed; using %d-name FALLBACK roster (not cached)", len(FALLBACK_CONSTITUENTS))
+            return [Constituent(**item) for item in FALLBACK_CONSTITUENTS]
 
         result = list(universe_dict.values())
 
