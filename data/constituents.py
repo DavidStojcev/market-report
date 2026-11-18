@@ -122,7 +122,7 @@ class ConstituentManager:
             if len(cols) >= 4:
                 raw_sym = cols[0].text.strip()
                 symbol = self.clean_symbol(raw_sym)
-                name = cols[1].text.strip()
+                name = cols[1].text.strip().replace("<", "").replace(">", "")
                 sector = cols[2].text.strip() if len(cols) > 2 else "Unknown"
                 constituents[symbol] = {"name": name, "sector": sector}
 
@@ -165,6 +165,7 @@ class ConstituentManager:
                         symbol = self.clean_symbol(col0)
                         name = col1
                     sector = cols[2].text.strip() if len(cols) > 2 else "Technology"
+                    name = name.replace("<", "").replace(">", "")
                     constituents[symbol] = {"name": name, "sector": sector}
 
         return constituents

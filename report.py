@@ -873,6 +873,11 @@ def generate_market_report(
         vix_sym=vix_sym,
         sec_macro=sec_macro,
     )
+    if not getattr(calendar_provider, "api_key", ""):
+        data_warnings.append(
+            "Economic calendar uses the built-in release schedule (no Finnhub key): dates follow official "
+            "agency calendars but prior/consensus figures in it are static, not live; events beyond its horizon are not shown."
+        )
     for w in data_warnings:
         logger.warning("DATA QUALITY: %s", w)
     _stale_or_missing = set(_stale_or_missing_symbols(core_tickers, core_bars, session_dt))
@@ -1035,42 +1040,35 @@ def generate_market_report(
             y10_delta_bps = sec_macro.data.fed_rates.yield_10y_delta * 100.0
         if y10_val is not None:
             delta_str = f" ({y10_delta_bps:+.1f} bps)" if y10_delta_bps is not None else ""
-            ca_tokens.append(f"10Y Yield {y10_val:.2f}%{delta_str}")
-        elif "^TNX" in core_bars and not core_bars["^TNX"].empty:
-            tnx_c = float(core_bars["^TNX"].iloc[-1]["Close"])
-            ca_tokens.append(f"10Y Yield {tnx_c:.2f}%")
+            _as_of_y = getattr(sec_macro.data.fed_rates, "rates_as_of", None)
+            _lag = f", FRED as of {_as_of_y}" if (_as_of_y and _as_of_y < period_info.session_date) else ""
+            ca_tokens.append(f"10Y Yield {y10_val:.2f}%{delta_str[:-1] + _lag + ')' if delta_str else ''}")
 
-        # DXY
-        dxy_bar = core_bars.get("DX-Y.NYB")
-        if dxy_bar is not None and not dxy_bar.empty and len(dxy_bar) >= 2:
-            dxy_c = float(dxy_bar.iloc[-1]["Close"])
-            dxy_p = float(dxy_bar.iloc[-2]["Close"])
-            dxy_pct = ((dxy_c - dxy_p) / dxy_p) * 100.0 if dxy_p > 0 else 0.0
-            ca_tokens.append(f"DXY {dxy_c:.2f} ({dxy_pct:+.2f}%)")
+        def _session_vs_baseline(sym: str):
+            """(close at session, % change vs period baseline close) - None if the feed is stale/missing.
 
-        # WTI Crude
-        wti_bar = core_bars.get("CL=F")
-        if wti_bar is not None and not wti_bar.empty and len(wti_bar) >= 2:
-            wti_c = float(wti_bar.iloc[-1]["Close"])
-            wti_p = float(wti_bar.iloc[-2]["Close"])
-            wti_pct = ((wti_c - wti_p) / wti_p) * 100.0 if wti_p > 0 else 0.0
-            ca_tokens.append(f"WTI Crude \\${wti_c:.2f} ({wti_pct:+.2f}%)")
+            Using the last two raw bars mislabels the change for assets that trade on weekends
+            (BTC: Sunday->Monday) and silently reports stale bars as the session close.
+            """
+            bar = core_bars.get(sym)
+            if bar is None or bar.empty:
+                return None
+            sub = bar[bar.index <= session_dt]
+            base = sub[sub.index <= pd.to_datetime(period_info.baseline_date)]
+            if sub.empty or base.empty or sub.index.max() < session_dt:
+                return None
+            c_v, b_v = float(sub["Close"].iloc[-1]), float(base["Close"].iloc[-1])
+            return (c_v, ((c_v - b_v) / b_v) * 100.0) if b_v > 0 else None
 
-        # Gold
-        gold_bar = core_bars.get("GC=F")
-        if gold_bar is not None and not gold_bar.empty and len(gold_bar) >= 2:
-            gold_c = float(gold_bar.iloc[-1]["Close"])
-            gold_p = float(gold_bar.iloc[-2]["Close"])
-            gold_pct = ((gold_c - gold_p) / gold_p) * 100.0 if gold_p > 0 else 0.0
-            ca_tokens.append(f"Gold \\${gold_c:,.2f} ({gold_pct:+.2f}%)")
-
-        # BTC
-        btc_bar = core_bars.get("BTC-USD")
-        if btc_bar is not None and not btc_bar.empty and len(btc_bar) >= 2:
-            btc_c = float(btc_bar.iloc[-1]["Close"])
-            btc_p = float(btc_bar.iloc[-2]["Close"])
-            btc_pct = ((btc_c - btc_p) / btc_p) * 100.0 if btc_p > 0 else 0.0
-            ca_tokens.append(f"Bitcoin \\${btc_c:,.0f} ({btc_pct:+.2f}%)")
+        for _sym, _fmt in (
+            ("DX-Y.NYB", lambda c, p: f"DXY {c:.2f} ({p:+.2f}%)"),
+            ("CL=F", lambda c, p: f"WTI Crude \\${c:.2f} ({p:+.2f}%)"),
+            ("GC=F", lambda c, p: f"Gold \\${c:,.2f} ({p:+.2f}%)"),
+            ("BTC-USD", lambda c, p: f"Bitcoin \\${c:,.0f} ({p:+.2f}% vs {period_info.baseline_date} close)"),
+        ):
+            _r = _session_vs_baseline(_sym)
+            if _r is not None:
+                ca_tokens.append(_fmt(*_r))
 
         if ca_tokens:
             sec_indices.data.cross_asset_line = "**Cross-Asset Line (1D):** " + " · ".join(ca_tokens)
@@ -1335,6 +1333,11 @@ def run_interactive_wizard() -> Dict[str, Any]:
 
 
 def main() -> None:
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(errors="replace")  # cp1252 consoles cannot encode emoji progress lines
+        except (AttributeError, ValueError):
+            pass
     # Trigger interactive wizard if executed in an interactive terminal with no arguments,
     # or if explicitly requested with -i / --interactive.
     is_interactive_cli = len(sys.argv) == 1 and sys.stdin.isatty()

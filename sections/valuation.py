@@ -337,6 +337,8 @@ def compute_valuation_erp(
 
     # 2. Load CAPE and baseline fundamentals from cache
     cape_file = Path("data/cache/valuation_cape.json")
+    snapshot_date = None
+    exact_snapshot = False
     cape_val = 34.82
     ref_month = "September 2026 (lagged official Shiller/Barclays series)"
     src_cape = "Yale / Robert Shiller CAPE via public dataset snapshot"
@@ -349,6 +351,13 @@ def compute_valuation_erp(
                 c_data = json.load(f)
                 dates_dict = c_data.get("dates", {})
                 d_entry = dates_dict.get(as_of_date or "")
+                exact_snapshot = bool(d_entry)
+                if not d_entry and dates_dict:
+                    # No snapshot for this session: use the most recent one ON OR BEFORE it and say so.
+                    prior_keys = sorted(k for k in dates_dict if not as_of_date or k <= as_of_date)
+                    if prior_keys:
+                        snapshot_date = prior_keys[-1]
+                        d_entry = dates_dict[snapshot_date]
                 if d_entry:
                     cape_val = float(d_entry.get("cape", cape_val))
                     ref_month = f"{d_entry.get('reference_month', 'September 2026')} (lagged official Shiller/Barclays series)"
@@ -390,8 +399,12 @@ def compute_valuation_erp(
     else:
         val_tier = "Fair / Historical Norm"
 
+    pe_label = (
+        "snapshot for this session" if exact_snapshot
+        else (f"manual snapshot dated {snapshot_date}" if snapshot_date else "undated default snapshot, may be stale")
+    )
     assessment_parts = [
-        f"S&P 500 trailing earnings yield stands at {ey_pct:.2f}% (trailing P/E {trailing_pe:.2f}x) "
+        f"S&P 500 trailing earnings yield stands at {ey_pct:.2f}% (trailing P/E {trailing_pe:.2f}x, {pe_label}) "
         f"alongside Shiller CAPE of {cape_val:.2f} ({ref_month})."
     ]
     if real_erp_bps is not None and real_10y is not None:

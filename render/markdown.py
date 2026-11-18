@@ -160,6 +160,28 @@ def _report_meta(sections: List[SectionResult]) -> Dict[str, Any]:
     return {"warnings": [], "generated": ""}
 
 
+def _warning_tags(warnings: List[str]) -> List[str]:
+    """Short visible tags for the header (full text sits in a collapsible block)."""
+    tags = []
+    for w in warnings:
+        wl = w.lower()
+        if wl.startswith("headline price data"):
+            tags.append("**headline prices not at session close**")
+        elif "fred" in wl and "lag" in wl:
+            tags.append("rates/credit lagged 1 day (FRED)")
+        elif "nasdaq-100 constituent" in wl:
+            tags.append("movers S&P 500 only")
+        elif "economic calendar" in wl:
+            tags.append("static econ calendar")
+        elif wl.startswith("constituent prices"):
+            tags.append("some constituents stale")
+        elif "macro/rates" in wl:
+            tags.append("**macro/rates unavailable**")
+        else:
+            tags.append(w.split(":")[0][:40])
+    return tags
+
+
 def _period_window_label(period: PeriodInfo) -> str:
     """Honest label for the evaluation window (to-date vs. complete period)."""
     if period.report_type == "daily":
@@ -192,7 +214,10 @@ def render_markdown(
     if period.is_partial:
         lines.append(f"> ℹ️ **Partial Period Notice:** {period.notes}")
     if _meta["warnings"]:
-        lines.append("> ⚠️ **Data Quality Warnings:** " + " | ".join(_meta["warnings"]))
+        lines.append("> ⚠️ **Data Quality:** " + "; ".join(_warning_tags(_meta["warnings"])) + " (details below)")
+        lines.append("<details><summary>Data quality warnings</summary>\n")
+        lines.extend(f"- {w}" for w in _meta["warnings"])
+        lines.append("\n</details>")
     lines.append("")
     lines.append("---")
     lines.append("")

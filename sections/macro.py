@@ -1837,9 +1837,9 @@ def _activity_phrase(metrics: Dict[str, MacroMetricSnapshot]) -> str:
     gdp = metrics.get("gdp")
     ret = metrics.get("retail_sales")
     if gdp is not None:
-        parts.append(f"Real GDP {gdp.headline_value:+.2f}% (latest release {gdp.latest_date})")
+        parts.append(f"Real GDP {gdp.headline_value:+.2f}% (reference period {gdp.latest_date})")
     if ret is not None:
-        parts.append(f"Retail Sales {ret.headline_value:+.2f}% (latest release {ret.latest_date})")
+        parts.append(f"Retail Sales {ret.headline_value:+.2f}% (reference period {ret.latest_date})")
     if not parts:
         return "Activity data unavailable; "
     return "Activity: " + ", ".join(parts) + "; "

@@ -509,6 +509,8 @@ def check_t12_sanity_bounds(sections: List[SectionResult]) -> QACheckResult:
     return QACheckResult("T12", "Sanity Bounds, Arithmetic & Split Integrity", status, details)
 
 
+_T13_PROPER_NOUN_EXEMPTIONS: List[str] = [r"\bBest Buy\b"]
+
 _T13_BANNED_PATTERNS: List[Tuple[str, str]] = [
     (r"\bbuy\b", "buy"),
     (r"\bsell\b", "sell"),
@@ -754,6 +756,9 @@ def check_t13_compliance_lint(
     cleaned_html = re.sub(r"<style\b[^>]*>.*?</style>", "", cleaned_html, flags=re.S | re.I)
 
     for source_label, text in (("Markdown", md_content or ""), ("HTML", cleaned_html)):
+        # Company names are not advice ("Best Buy" tripped the 'buy' rule when BBY was a sector leader).
+        for proper_noun in _T13_PROPER_NOUN_EXEMPTIONS:
+            text = re.sub(proper_noun, " ", text)
         for pat, label in _T13_BANNED_PATTERNS:
             m = re.search(pat, text, flags=re.I)
             if m:

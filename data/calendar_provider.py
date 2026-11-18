@@ -1,6 +1,7 @@
 """Economic and earnings calendar providers (Finnhub default, FMP stub)."""
 
 from datetime import datetime, timedelta
+import re
 import json
 import logging
 import os
@@ -38,6 +39,11 @@ def evaluate_surprise_flag(
         return "weak" if diff > 0 else "strong"
     else:  # payrolls, retail sales, gdp, sentiment, labor
         return "strong" if diff > 0 else "weak"
+
+
+def _clean_text(val: Any) -> str:
+    """Strip markup characters from third-party text before it reaches the HTML renderer."""
+    return re.sub(r"[<>\x00-\x1f]", "", str(val or "")).strip()
 
 
 class OfficialScheduleCalendarProvider(EconCalendarProvider):
@@ -453,7 +459,7 @@ class FinnhubCalendarProvider(EconCalendarProvider):
             if country and country.upper() not in ("US", "UNITED STATES"):
                 continue
 
-            event_name = item.get("event", "Economic Release")
+            event_name = _clean_text(item.get("event", "Economic Release"))
             dt_str = item.get("time", "") or item.get("date", "")
             date_only = dt_str[:10] if dt_str else start_date
 
@@ -524,7 +530,7 @@ class FinnhubCalendarProvider(EconCalendarProvider):
             if min_importance == "high" and impact != "high":
                 continue
 
-            event_name = item.get("event", "Economic Event")
+            event_name = _clean_text(item.get("event", "Economic Event"))
             dt_str = item.get("time", "") or item.get("date", "")
             date_only = dt_str[:10] if dt_str else ""
 
