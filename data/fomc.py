@@ -185,10 +185,21 @@ def resolve_fomc_schedule(
     else:
         occurred_in_period = (last_meeting == ref_dt)
 
-    action = record.get("action", "Hold")
-    vote_count = record.get("vote_count", "12-0 unanimous")
-    dissents = record.get("dissents", "None")
-    decision_summary = record.get("summary", recent_decision_summary or f"Maintained target range at {target_range}")
+    if record:
+        action = record["action"]
+        vote_count = record["vote_count"]
+        dissents = record["dissents"]
+        decision_summary = record["summary"]
+    else:
+        # The statement for this meeting is not in OFFICIAL_FOMC_STATEMENTS: do not assume a
+        # unanimous hold.  Report only what the effective fed funds rate implies.
+        action = "Unverified"
+        vote_count = "n/a"
+        dissents = "n/a"
+        decision_summary = recent_decision_summary or (
+            f"decision details not in the local statement record; effective fed funds of {fed_funds_rate:.2f}% "
+            f"implies a target range of {target_range}."
+        )
 
     return FomcStatus(
         fed_funds_rate=fed_funds_rate,

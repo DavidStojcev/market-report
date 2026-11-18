@@ -385,7 +385,7 @@ def build_movers(
         for grp in (d_gainers, d_losers, w_gainers, w_losers, m_gainers, m_losers):
             _enrich_cohort_sympathy(grp)
 
-        if not d_gainers and not w_gainers and not m_gainers:
+        if not any((d_gainers, d_losers, w_gainers, w_losers, m_gainers, m_losers)):
             return SectionResult(
                 section_num=6,
                 title=f"Top Movers ({movers_universe_label(constituents)})",

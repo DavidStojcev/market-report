@@ -279,8 +279,8 @@ def build_what_changed(
                 "type": "fed_rates_shift",
                 "score": rate_score,
                 "text": (
-                    f"Restrictive Rates & Constrained Fed Flexibility: 2-Year Treasury yields trading +{spread_2y_ff:.0f} bps above fed funds "
-                    f"alongside FOMC hike dissents confirm that monetary easing remains off the table, capping broad valuation multiple expansion."
+                    f"Restrictive Rates & Constrained Fed Flexibility: 2-Year Treasury yields trading {spread_2y_ff:+.0f} bps vs fed funds "
+                    f"indicate the market is not pricing near-term easing, a headwind for broad valuation multiple expansion."
                 ),
             })
 

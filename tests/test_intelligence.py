@@ -176,10 +176,15 @@ def test_real_rate_fisher_attribution():
     intel_infl = compute_real_rate_intelligence(snap_real_flat, snap_be_surge, nominal_10y=4.80, nominal_delta=0.21)
     assert intel_infl.driver_attribution == "Inflation Expectations Re-pricing"
 
-    # 3. Fallback on None
-    intel_fallback = compute_real_rate_intelligence(None, None, nominal_10y=4.50, nominal_delta=0.0)
-    assert intel_fallback.real_yield_10y == 2.63
-    assert intel_fallback.breakeven_10y == 2.34
+    # 3. One leg missing: derived from the Fisher identity (nominal = real + breakeven), not a placeholder
+    intel_derived = compute_real_rate_intelligence(snap_real, None, nominal_10y=4.98, nominal_delta=0.15)
+    assert intel_derived.real_yield_10y == 2.63
+    assert intel_derived.breakeven_10y == round(4.98 - 2.63, 2)
+
+    # 4. Both legs missing: refuse to fabricate levels
+    import pytest
+    with pytest.raises(ValueError):
+        compute_real_rate_intelligence(None, None, nominal_10y=4.50, nominal_delta=0.0)
 
 
 def test_vol_term_structure_contango_backwardation():
@@ -274,7 +279,9 @@ def test_macro_regime_quadrant_mapping():
     assert intel_monthly.quadrant == "Reflation / Late-Cycle Tension"
     assert "Monthly Strategic" in intel_monthly.summary_badge
     assert "Strategic Macro Regime & Rotation" in intel_monthly.forward_outlook
-    assert "recession risks" in intel_monthly.forward_outlook
+    # Activity clause comes from actual releases, never hard-coded figures
+    assert "Activity" in intel_monthly.forward_outlook
+    assert "Q3 GDP +3.37%" not in intel_monthly.forward_outlook
 
     # 2. Goldilocks (Growth Resilient + Inflation Easing)
     metrics_goldilocks = {

@@ -53,7 +53,14 @@ def test_1_2_fed_path_probabilities_structure():
     from render.html import render_html
     from sections.base import SectionResult
 
-    fed_res = build_fed_path(macro_data=None, as_of_date="2026-10-30")
+    # Without FRED rates the section must be unavailable rather than built on placeholder rates
+    assert build_fed_path(macro_data=None, as_of_date="2026-10-30").status == "unavailable"
+
+    from types import SimpleNamespace
+    from data.fred_provider import MacroMetricSnapshot
+    core = MacroMetricSnapshot("PCEPILFE", "Core PCE", "2026-09-30", 0.0, 2.9, "% YoY", 0.0, 2.9)
+    macro_stub = SimpleNamespace(fed_rates=SimpleNamespace(fed_funds_rate=3.83, yield_2y=4.60), metrics={"core_pce": core})
+    fed_res = build_fed_path(macro_data=macro_stub, as_of_date="2026-10-30")
     data: FedPathData = fed_res.data
     assert hasattr(data, "market_implied_prob_hold")
     assert hasattr(data, "market_implied_prob_hike")

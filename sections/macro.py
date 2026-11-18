@@ -1831,6 +1831,20 @@ def compute_sector_rotation_intelligence(
     )
 
 
+def _activity_phrase(metrics: Dict[str, MacroMetricSnapshot]) -> str:
+    """Activity clause built from the actual GDP / retail-sales releases (never hard-coded figures)."""
+    parts = []
+    gdp = metrics.get("gdp")
+    ret = metrics.get("retail_sales")
+    if gdp is not None:
+        parts.append(f"Real GDP {gdp.headline_value:+.2f}% (latest release {gdp.latest_date})")
+    if ret is not None:
+        parts.append(f"Retail Sales {ret.headline_value:+.2f}% (latest release {ret.latest_date})")
+    if not parts:
+        return "Activity data unavailable; "
+    return "Activity: " + ", ".join(parts) + "; "
+
+
 def compute_macro_regime_intelligence(
     metrics: Dict[str, MacroMetricSnapshot],
     credit: CreditSpreadIntelligence,
@@ -2015,7 +2029,7 @@ def compute_macro_regime_intelligence(
     elif fomc:
         fomc_str = f"The next scheduled FOMC rate decision is {fomc.next_meeting_date} ({fomc.days_to_next_meeting} days away)."
     else:
-        fomc_str = "Corporate refinancing conditions remain stable."
+        fomc_str = ""
 
     # Yield resistance and support context
     if yield_resistance and yield_support:
@@ -2113,8 +2127,8 @@ def compute_macro_regime_intelligence(
             )
         else:
             forward_outlook = (
-                f"Strategic Macro Regime & Rotation: Robust growth coupled with cooling price pressures created an ideal backdrop for equity multiple expansion. "
-                f"Sector returns show leadership in {leaders_3} backed by rock-solid corporate solvency ({credit.spread_bps:.0f} bps OAS), supporting constructive equity positioning into year-end."
+                f"Strategic Macro Regime & Rotation: Growth readings firm while price pressures cooled, a combination historically supportive of equity multiples. "
+                f"Sector returns show leadership in {leaders_3}, with high-yield spreads at {credit.spread_bps:.0f} bps OAS indicating low priced-in credit stress."
             )
 
     elif quadrant.startswith("Reflation"):
@@ -2140,7 +2154,7 @@ def compute_macro_regime_intelligence(
             forward_outlook = (
                 f"Tactical Session Posture: {sector_tape_phrase}. {dispersion_str} "
                 f"High-yield credit spreads remain tight at {credit.spread_bps:.0f} bps OAS ({credit.regime}) and the VIX term "
-                f"structure sits in upward-sloping contango (ratio {vol_term.ratio:.3f}), confirming that systemic solvency risks remain absent. "
+                f"structure sits in upward-sloping contango (ratio {vol_term.ratio:.3f}), consistent with low priced-in systemic stress. "
                 f"Next 1–3 Sessions Watch: Restrictive real 10Y yields ({rates.real_yield_10y:.2f}%) continue to cap equity valuation multiples; "
                 f"watch whether key technical support holds or if mega-cap divergence pulls the index back toward range lows ahead of upcoming macro catalysts."
             )
@@ -2152,11 +2166,11 @@ def compute_macro_regime_intelligence(
                 f"Leadership remained selective across market capitalizations (Russell 2000 vs Nasdaq-100 spread: {rotation.rut_vs_ndx_spread:+.2f}%)."
             )
             forward_outlook = (
-                f"Weekly Positioning & Sectors: Over the 5-day cycle, {sector_tape_phrase[0].lower() + sector_tape_phrase[1:]}.{rank_context} "
+                f"Weekly Positioning & Sectors: Over the week, {sector_tape_phrase[0].lower() + sector_tape_phrase[1:]}.{rank_context} "
                 f"{breadth_str} "
-                f"{yield_trend_phrase} alongside benign credit spreads ({credit.spread_bps:.0f} bps OAS) confirm that corporate refinancing conditions "
-                f"remain sound. {fomc_str} "
-                f"Coming Week Watch: With the Fed meeting concluded, attention shifts to key economic catalysts; {yield_levels_str} "
+                f"{yield_trend_phrase} alongside benign credit spreads ({credit.spread_bps:.0f} bps OAS) are consistent with open corporate refinancing "
+                f"conditions. {fomc_str} "
+                f"Coming Week Watch: {'With the Fed meeting concluded, attention shifts to key economic catalysts; ' if (fomc and fomc.occurred_in_period) else 'Key economic catalysts ahead; '}{yield_levels_str} "
                 f"and whether rotation across cyclicals and defensives continues to support the broader market."
             )
         else:  # monthly
@@ -2170,10 +2184,10 @@ def compute_macro_regime_intelligence(
             )
             forward_outlook = (
                 f"Strategic Macro Regime & Rotation: Over the past month, {sector_tape_phrase[0].lower() + sector_tape_phrase[1:]} (top leaders: {leaders_3}). {rsp_monthly_phrase} "
-                f"Resilient economic activity (Q3 GDP +3.37%, Retail Sales +0.77%) indicates reduced near-term recession risks, while compressed high-yield spreads ({credit.spread_bps:.0f} bps OAS) "
-                f"suggest corporate balance sheets remain well-capitalized. However, elevated inflation ({cpi_head_str}, {core_cpi_str}, {core_pce_str}) keeps 10Y TIPS real yields restrictive at {rates.real_yield_10y:.2f}%. "
-                f"Multi-Month Strategic Posture: High real cost of capital caps broad valuation multiple expansion; favors high-quality dividend growers, value cash flows, "
-                f"and real-asset / reflation exposures heading into year-end."
+                f"{_activity_phrase(metrics)}compressed high-yield spreads ({credit.spread_bps:.0f} bps OAS) "
+                f"indicate low priced-in credit stress. However, elevated inflation ({cpi_head_str}, {core_cpi_str}, {core_pce_str}) keeps 10Y TIPS real yields restrictive at {rates.real_yield_10y:.2f}%. "
+                f"Multi-Month Context: a high real cost of capital has historically capped broad valuation multiple expansion; "
+                f"in such regimes, cash-flow-rich and real-asset segments have tended to hold up relatively better (historical tendency, not a forecast)."
             )
 
     elif quadrant.startswith("Stagflationary Pressure"):
@@ -2419,6 +2433,8 @@ def build_macro_section(
             sid for sid, val in (("DFF", dff_df), ("DGS2", snap_2y), ("DGS10", snap_10y))
             if val is None or (isinstance(val, pd.DataFrame) and val.empty)
         ]
+        if snap_real is None and snap_be is None:
+            missing_core.append("DFII10+T10YIE")
         if missing_core:
             logger.warning("Core FRED rate series unavailable (%s); suppressing macro section.", ", ".join(missing_core))
             return SectionResult(

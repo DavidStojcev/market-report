@@ -318,7 +318,7 @@ def _build_executive_brief(
     wim_parts = []
     if credit is not None and vol_term is not None:
         if credit.spread_bps < 400 and vol_term.ratio <= 1.0:
-            wim_parts.append(f"Tight credit spreads ({credit.spread_bps:.0f} bps OAS) and VIX contango (ratio {vol_term.ratio:.3f}) signal zero systemic funding stress")
+            wim_parts.append(f"Tight credit spreads ({credit.spread_bps:.0f} bps OAS) and VIX contango (ratio {vol_term.ratio:.3f}) are consistent with low priced-in systemic funding stress")
         else:
             wim_parts.append(f"Credit spreads ({credit.spread_bps:.0f} bps OAS) and VIX term ratio ({vol_term.ratio:.3f}) require active tail-risk monitoring")
     if is_narrow_bounce:
