@@ -2,8 +2,10 @@ name: Automated US Market Reports
 
 on:
   schedule:
-    # 21:00 UTC Mon-Fri ensures market has closed in both EDT (17:00 ET) and EST (16:00 ET)
-    - cron: '0 21 * * 1-5'
+    # 21:30 UTC Mon-Fri = 17:30 EDT / 16:30 EST: at least 30 min after the regular close in both
+    # DST regimes (21:00 UTC was exactly the 16:00 EST bell in winter). The calendar also refuses
+    # to treat a session as final until close + 30 min.
+    - cron: '30 21 * * 1-5'
   workflow_dispatch:
     inputs:
       report_type:

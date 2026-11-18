@@ -1,6 +1,7 @@
 """Market calendar and trading session resolution module."""
 
 import calendar
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import List, Optional, Tuple
@@ -39,19 +40,45 @@ class MarketCalendar:
         ts = pd.Timestamp(dt)
         return self.cal.is_session(ts)
 
-    def get_latest_session(self, dt: Optional[date] = None) -> date:
-        """Get the most recent closed trading session on or before dt."""
-        if dt is None:
+    # Minutes after the official close before a session's daily bar is treated as final
+    # (closing auction prints / index settlement).  Applies to early-close days too.
+    CLOSE_SETTLE_MINUTES = 30
+
+    def _session_is_settled(self, d: date, now_utc: Optional[datetime] = None) -> bool:
+        """True if session `d` closed at least CLOSE_SETTLE_MINUTES ago (uses the real, possibly early, close)."""
+        if not self.is_trading_day(d):
+            return True
+        close_utc = self.cal.session_close(pd.Timestamp(d))
+        now = pd.Timestamp(now_utc or datetime.now(zoneinfo.ZoneInfo("UTC")))
+        if now.tzinfo is None:
+            now = now.tz_localize("UTC")
+        return now >= close_utc + pd.Timedelta(minutes=self.CLOSE_SETTLE_MINUTES)
+
+    def get_latest_session(self, dt: Optional[date] = None, now_utc: Optional[datetime] = None) -> date:
+        """Get the most recent *closed* trading session on or before dt.
+
+        A session that has not closed (+ settle buffer) yet is never returned: its bar would be an
+        intraday snapshot labelled as a final close.  This applies to an explicit `dt` of today as well.
+        """
+        if now_utc is not None:
+            now_utc = pd.Timestamp(now_utc)
+            now_utc = now_utc.tz_localize("UTC") if now_utc.tzinfo is None else now_utc.tz_convert("UTC")
+            now_et = now_utc.tz_convert(US_EASTERN)
+        else:
             now_et = datetime.now(US_EASTERN)
-            # If before 16:00 ET on a trading day, latest completed session is previous session
-            if now_et.time() < datetime.strptime("16:00", "%H:%M").time():
-                dt = (now_et - timedelta(days=1)).date()
-            else:
-                dt = now_et.date()
+        if dt is None:
+            dt = now_et.date()
 
         ts = pd.Timestamp(dt)
-        session_ts = self.cal.date_to_session(ts, direction="previous")
-        return session_ts.date()
+        session_d = self.cal.date_to_session(ts, direction="previous").date()
+        if not self._session_is_settled(session_d, now_utc):
+            prev_d = self.get_previous_session(session_d)
+            logging.getLogger(__name__).warning(
+                "Session %s has not closed yet (close + %d min); using last closed session %s",
+                session_d, self.CLOSE_SETTLE_MINUTES, prev_d,
+            )
+            session_d = prev_d
+        return session_d
 
     def get_sessions_between(self, start: date, end: date) -> List[date]:
         """Get all trading sessions between start and end (inclusive)."""
@@ -185,7 +212,8 @@ class MarketCalendar:
             prev_baseline_date = sessions_two_weeks_ago[-1] if sessions_two_weeks_ago else self.get_previous_session(mon_prev_week)
 
             all_possible_week_sessions = self.get_sessions_between(mon_this_week, fri_this_week)
-            is_partial = session_date < fri_this_week or len(sessions_this_week) < len(all_possible_week_sessions)
+            # Complete when the week's LAST scheduled session is reached (Thursday in a Good Friday week).
+            is_partial = (session_date < all_possible_week_sessions[-1]) if all_possible_week_sessions else True
 
             return PeriodInfo(
                 report_type="weekly",
@@ -199,7 +227,11 @@ class MarketCalendar:
                 prev_baseline_date=prev_baseline_date.isoformat(),
                 is_partial=is_partial,
                 session_count=len(sessions_this_week),
-                notes=f"Week-to-date ({len(sessions_this_week)} sessions) vs previous full week ({len(sessions_prev_week)} sessions)",
+                notes=(
+                    f"{'Week-to-date' if is_partial else 'Full week'} ({len(sessions_this_week)} sessions) "
+                    f"vs previous week ({len(sessions_prev_week)} sessions)"
+                    + ("; session counts differ, compare returns with care" if len(sessions_this_week) != len(sessions_prev_week) else "")
+                ),
             )
 
         else:  # monthly
@@ -233,5 +265,8 @@ class MarketCalendar:
                 prev_baseline_date=prev_baseline_date.isoformat(),
                 is_partial=is_partial,
                 session_count=len(sessions_this_month),
-                notes=f"Month-to-date ({len(sessions_this_month)} sessions) vs previous full month ({len(sessions_prev_month)} sessions)",
+                notes=(
+                    f"{'Month-to-date' if is_partial else 'Full month'} ({len(sessions_this_month)} sessions) "
+                    f"vs previous full month ({len(sessions_prev_month)} sessions)"
+                ),
             )
