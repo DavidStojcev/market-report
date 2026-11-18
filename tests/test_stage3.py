@@ -168,7 +168,9 @@ def test_realized_volatility_and_risk_premium(sample_price_df, sample_config):
 def test_fed_path_builder_and_invariants(sample_config):
     """Verify Fed path metrics, countdown, and real policy rate."""
     as_of = "2026-10-30"
-    res = build_fed_path(macro_data=None, as_of_date=as_of, cfg=sample_config)
+    # No FRED rates -> no section (never a placeholder fed funds / 2Y backdrop)
+    assert not build_fed_path(macro_data=None, as_of_date=as_of, cfg=sample_config).is_available
+    res = build_fed_path(macro_data=_fed_macro_stub(), as_of_date=as_of, cfg=sample_config)
     assert res.is_available
     data: FedPathData = res.data
     assert data.last_action_date == "2026-10-28"
@@ -237,7 +239,7 @@ def test_render_markdown_and_html_stage3_integration(sample_config, sample_price
     sec_swing = evaluate_swing_gate(sample_price_df, sample_price_df, 19.42, 19.0, 0.95, None, as_of, sample_config)
     sec_theme = build_theme_relative_strength({}, as_of, sample_config)
     sec_comm = build_commodities_cross_asset({}, as_of, "2026-10-23", "2026-10-16", None, sample_config)
-    sec_fed = build_fed_path(None, as_of, sample_config)
+    sec_fed = build_fed_path(_fed_macro_stub(), as_of, sample_config)
     sec_cal = build_forward_calendar(None, as_of, sample_config)
     sec_earn = build_earnings_layer(None, [], {}, as_of, sample_config)
     sec_sent = build_sentiment_positioning(sample_price_df, 19.42, as_of, sample_config)
@@ -298,3 +300,10 @@ def test_render_markdown_and_html_stage3_integration(sample_config, sample_price
     assert "VOLATILITY RISK PREMIUM" in html
     assert "Movers by Theme:" in html
     assert "Theme / Industry ETF" in html
+
+def _fed_macro_stub():
+    """Minimal FRED-backed macro data (fed funds, 2Y, core PCE) for the Fed path builder."""
+    from types import SimpleNamespace
+    from data.fred_provider import MacroMetricSnapshot
+    core = MacroMetricSnapshot("PCEPILFE", "Core PCE", "2026-09-30", 0.0, 2.9, "% YoY", 0.0, 2.9)
+    return SimpleNamespace(fed_rates=SimpleNamespace(fed_funds_rate=3.83, yield_2y=4.60), metrics={"core_pce": core})

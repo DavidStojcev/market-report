@@ -56,9 +56,9 @@ def movers_universe_label(constituents: List[Constituent]) -> str:
     if has_spx and has_ndx:
         return "S&P 500 + Nasdaq-100"
     if has_spx:
-        return "S&P 500 only; Nasdaq-100 list unavailable"
+        return "S&P 500 only"
     if has_ndx:
-        return "Nasdaq-100 only; S&P 500 list unavailable"
+        return "Nasdaq-100 only"
     return "fallback roster"
 
 

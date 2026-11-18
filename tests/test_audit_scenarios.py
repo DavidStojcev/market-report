@@ -154,7 +154,7 @@ def test_losers_are_actually_down_and_label_reflects_universe():
     assert res.is_available
     assert res.data.day.losers == []
     assert all(m.pct_change > 0 for m in res.data.day.gainers)
-    assert "Nasdaq-100 list unavailable" in res.title
+    assert res.title == "Top Movers (S&P 500 only)"
     assert res.data.day.gainers[0].market_cap_str == "n/a"
 
 

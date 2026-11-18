@@ -209,15 +209,19 @@ def render_markdown(
     rep_title = f"{period.report_type.capitalize()} US Market Report"
     lines.append(f"# {rep_title}")
     _meta = _report_meta(sections)
-    lines.append(f"**As of:** `{period.session_date}` close | **Period Window:** `{period.current_start}` to `{period.current_end}` ({_period_window_label(period)}, baseline close `{period.baseline_date}`) | **Evaluation:** US/Eastern")
-    lines.append(f"*End-of-day data (Yahoo Finance, FRED); generated {_meta['generated'] or 'n/a'}. Informational research only, not investment advice.*")
+    lines.append(f"**As of:** `{period.session_date}` close | **Period Window:** `{period.current_start}` to `{period.current_end}` | **Evaluation:** US/Eastern")
     if period.is_partial:
         lines.append(f"> ℹ️ **Partial Period Notice:** {period.notes}")
     if _meta["warnings"]:
-        lines.append("> ⚠️ **Data Quality:** " + "; ".join(_warning_tags(_meta["warnings"])) + " (details below)")
-        lines.append("<details><summary>Data quality warnings</summary>\n")
-        lines.extend(f"- {w}" for w in _meta["warnings"])
-        lines.append("\n</details>")
+        lines.append("> ⚠️ **Data Quality:** " + "; ".join(_warning_tags(_meta["warnings"])))
+    # Full warning text + provenance stay collapsible: QA U1 budgets visible words only.
+    lines.append("<details><summary>Data provenance & quality warnings</summary>\n")
+    lines.append(
+        f"- {_period_window_label(period)}, measured from the `{period.baseline_date}` close; end-of-day data "
+        f"(Yahoo Finance, FRED); generated {_meta['generated'] or 'n/a'}. Informational research only, not investment advice."
+    )
+    lines.extend(f"- {w}" for w in _meta["warnings"])
+    lines.append("\n</details>")
     lines.append("")
     lines.append("---")
     lines.append("")

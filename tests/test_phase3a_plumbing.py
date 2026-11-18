@@ -90,7 +90,13 @@ def test_credit_and_real_rate_bbb_5y5y_extensions():
         headline_unit="%",
         prior_headline=2.18,
     )
-    rates_intel = compute_real_rate_intelligence(None, None, 4.25, 0.05, snap_5y5y=f5y5y_snap)
+    real_snap = MacroMetricSnapshot(
+        series_id="DFII10", name="10Y TIPS", latest_date="2026-10-30", latest_value=1.95,
+        headline_value=1.95, headline_unit="%", prior_value=1.92, prior_headline=1.92, period_change=0.03,
+    )
+    # One leg present is enough (the other is derived via Fisher identity); placeholders are never used.
+    rates_intel = compute_real_rate_intelligence(real_snap, None, 4.25, 0.05, snap_5y5y=f5y5y_snap)
+    assert rates_intel.breakeven_10y == round(4.25 - 1.95, 2)
     assert rates_intel.forward_5y5y_pct == 2.21
     assert rates_intel.forward_5y5y_delta_bps == 3.0
     assert "2.21%" in rates_intel.assessment
