@@ -227,6 +227,7 @@ def generate_market_report(
         request_delay=cfg.data.request_delay_seconds,
         max_retries=cfg.data.max_retries,
         backoff_factor=cfg.data.backoff_factor,
+        force_refresh=force_refresh,
     )
     snapshots = SnapshotStore(db_path=cfg.data.snapshot_db_path)
     const_manager = ConstituentManager(
@@ -1405,7 +1406,7 @@ def main() -> None:
     parser.add_argument(
         "--no-cache",
         action="store_true",
-        help="Force refresh constituents and live data",
+        help="Re-download prices (replacing cached bars) and the constituent list",
     )
     parser.add_argument(
         "--if-scheduled-day",

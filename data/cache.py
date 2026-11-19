@@ -153,8 +153,9 @@ class ParquetCache:
         ticker: str,
         df: pd.DataFrame,
         interval: str = "1d",
+        replace: bool = False,
     ) -> None:
-        """Write or update cached bars for a ticker."""
+        """Write or update cached bars for a ticker (replace=True discards existing cached bars)."""
         if df.empty:
             return
 
@@ -170,7 +171,7 @@ class ParquetCache:
                 clean_df.index = clean_df.index.normalize()
 
             # Merge with existing if present
-            if path.exists():
+            if path.exists() and not replace:
                 try:
                     existing = pd.read_parquet(path)
                     if not isinstance(existing.index, pd.DatetimeIndex):

@@ -246,3 +246,27 @@ def test_data_warnings_flag_stale_headline_and_lags():
     assert "^GSPC (last bar 2026-11-11)" in text
     assert "FRED" in text and "2026-11-12" in text
     assert "Nasdaq-100 constituent list unavailable" in text
+
+
+def test_no_cache_flag_replaces_price_cache(tmp_path, monkeypatch):
+    """--no-cache must re-download prices and replace cached bars, not just the constituent list."""
+    from data.yfinance_provider import YFinanceDataProvider
+
+    old = _bars(np.linspace(100, 110, 300))
+    old.iloc[-1, old.columns.get_loc("Close")] = 55.0  # bar corrupted by older code
+    ParquetCache(str(tmp_path)).write_bars("ABC", old)
+    fresh = _bars(np.linspace(100, 110, 300))
+    calls = []
+
+    def fake_fetch(self, tickers, start_date, end_date, interval="1d"):
+        calls.append(list(tickers))
+        return pd.concat({t: fresh for t in tickers}, axis=1)
+
+    monkeypatch.setattr(YFinanceDataProvider, "_fetch_batch_with_retry", fake_fetch)
+    cached = YFinanceDataProvider(cache_dir=str(tmp_path), request_delay=0).get_history(["ABC"], "2026-01-02", AS_OF)
+    assert calls == [] and cached["ABC"]["Close"].iloc[-1] == 55.0  # normal run trusts the cache
+
+    refreshed = YFinanceDataProvider(cache_dir=str(tmp_path), request_delay=0, force_refresh=True).get_history(["ABC"], "2026-01-02", AS_OF)
+    assert calls == [["ABC"]]
+    assert refreshed["ABC"]["Close"].iloc[-1] == pytest.approx(110.0)
+    assert ParquetCache(str(tmp_path)).read_bars("ABC")["Close"].iloc[-1] == pytest.approx(110.0)

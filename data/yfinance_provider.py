@@ -32,8 +32,13 @@ class YFinanceDataProvider(DataProvider):
         request_delay: float = 0.05,
         max_retries: int = 3,
         backoff_factor: float = 1.5,
+        force_refresh: bool = False,
     ):
         self.cache = ParquetCache(cache_dir=cache_dir)
+        # --no-cache: re-download every ticker's full window once per run and REPLACE its cache file
+        # (merging would keep bars written by older code, e.g. ones rescaled by the old split heuristic).
+        self.force_refresh = force_refresh
+        self._refreshed: set = set()
         self.batch_size = batch_size
         self.request_delay = request_delay
         self.max_retries = max_retries
@@ -158,6 +163,9 @@ class YFinanceDataProvider(DataProvider):
         target_end = pd.to_datetime(end_date)
 
         for t in tickers:
+            if self.force_refresh and t not in self._refreshed:
+                missing_tickers.append(t)
+                continue
             cached_df = self.cache.read_bars(t, start_date=None, end_date=None, interval=interval)
             if cached_df is not None and not cached_df.empty:
                 cached_min = cached_df.index.min()
@@ -176,6 +184,9 @@ class YFinanceDataProvider(DataProvider):
         stale_tickers: List[str] = []
         fresh_tickers: List[str] = []
         for t in missing_tickers:
+            if self.force_refresh and t not in self._refreshed:
+                fresh_tickers.append(t)
+                continue
             c_df = self.cache.read_bars(t, start_date=None, end_date=None, interval=interval)
             if c_df is not None and not c_df.empty and c_df.index.min() <= target_start + pd.Timedelta(days=15):
                 stale_tickers.append(t)
@@ -191,11 +202,15 @@ class YFinanceDataProvider(DataProvider):
                 for t in chunk:
                     ticker_df = self._extract_ticker_df(raw_data, t)
                     if not ticker_df.empty:
-                        self.cache.write_bars(t, ticker_df, interval=interval)
+                        replace = self.force_refresh and t not in self._refreshed
+                        self.cache.write_bars(t, ticker_df, interval=interval, replace=replace)
+                        self._refreshed.add(t)
                         full_df = self.cache.read_bars(t, start_date=start_date, end_date=end_date, interval=interval)
                         results[t] = full_df if full_df is not None and not full_df.empty else ticker_df
                     else:
-                        results[t] = pd.DataFrame()
+                        # Download failed: fall back to whatever is cached (staleness is flagged by the report).
+                        c_df = self.cache.read_bars(t, start_date=start_date, end_date=end_date, interval=interval)
+                        results[t] = c_df if c_df is not None else pd.DataFrame()
 
         # 2. Fetch incremental delta for stale tickers
         if stale_tickers:
