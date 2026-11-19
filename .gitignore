@@ -39,3 +39,6 @@ Thumbs.db
 .idea/
 .vscode/
 
+
+# Runtime fetcher state (regenerated each run)
+data/cache/fetch_state.json
