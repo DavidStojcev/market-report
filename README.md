@@ -37,7 +37,7 @@ Don't want to run Python locally? You can fork this repository to get your own f
 
 ## 📊 Report Showcase & Visual Preview
 
-Each generated report is fully standalone (works offline with embedded fonts and vector graphics) and supports responsive light/dark themes. Daily reports are a compact 8-section brief; weekly and monthly reports are the full edition (19 sections, including the sector heatmap, theme strength, cross-asset tracker, Fed path, calendar, earnings and sentiment panels). The screenshots below are from a monthly report in dark mode.
+Each generated report is fully standalone (works offline with embedded fonts and vector graphics) and supports responsive light/dark themes. Daily reports are a compact 8-section brief; weekly and monthly reports are the full edition (19 sections, including the sector heatmap, theme strength, cross-asset tracker, Fed path, calendar, earnings and sentiment panels). The screenshots below are from a monthly report in the default light theme.
 
 ### Market Breadth & Internal Participation
 S&P 500 constituent breadth: % of stocks above the 20/50/200 DMA (with 1-year percentile context), Advance/Decline ratio, Net 52-week Highs, the Cap-Weight vs. Equal-Weight leadership spread (`SPY` vs. `RSP`), and the McClellan Oscillator:
@@ -48,6 +48,11 @@ S&P 500 constituent breadth: % of stocks above the 20/50/200 DMA (with 1-year pe
 All 11 Select Sector SPDR ETFs across five horizons (1-Day, 1-Week, 1-Month, 3-Month, and YTD) to identify capital rotation, momentum leadership, and tactical divergence. Weekly and monthly reports pair it with a ranked relative-strength table:
 
 ![Sector Multi-Horizon Relative Return Heatmap](./assets/preview_sector_matrix.png)
+
+### Top Movers (S&P 500 only)
+The five biggest gainers and losers for the period, restricted to S&P 500 constituents that pass the price (≥ $5), liquidity (≥ 1M shares/day) and market-cap (≥ $2B) filters. Each row shows sector, market cap, close, change, relative 20-day volume, whether the move followed an earnings release, and a short technical context note, with a theme summary above the tables:
+
+![Top Movers (S&P 500 only)](./assets/preview_top_movers.png)
 
 Generated reports are automatically saved to:
 - `reports/daily/YYYY-MM-DD.html` and `.md`
