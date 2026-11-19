@@ -15,7 +15,7 @@ cd swing-trading-market-report
 # or run.bat on Windows
 ```
 
-> **Zero API Keys Required**: The platform runs 100% out of the box using free, resilient public market feeds (`yfinance`). Optional macroeconomic and email feeds can be added at any time.
+> **Zero API Keys Required**: The platform runs out of the box using free public market feeds (`yfinance`). Optional FRED and Finnhub keys add live macro series and an economic calendar with consensus figures; without them those sections fall back to cached data or a built-in release schedule (static prior/consensus values).
 
 ---
 
@@ -26,9 +26,9 @@ Don't want to run Python locally? You can fork this repository to get your own f
 1. Click **Fork** (top-right of this repository).
 2. In your forked repo, go to **Settings** → **Pages**.
 3. Under **Build and deployment**, set **Source** to **GitHub Actions**.
-4. Every weekday at US market close (21:00 UTC), GitHub Actions will automatically generate the report and publish it live to:
+4. Every weekday at 21:30 UTC (at least 30 minutes after the NYSE close in both daylight-saving regimes), GitHub Actions generates the report and publishes the latest one live to:
    ```text
-   https://<your-username>.github.io/market-report/
+   https://<your-username>.github.io/<your-repo-name>/
    ```
 5. Bookmark that URL on your phone or desktop for a fresh, interactive report every afternoon!
    *(You can also trigger a fresh report on-demand anytime from the **Actions** tab → **Run workflow**).*
@@ -37,22 +37,24 @@ Don't want to run Python locally? You can fork this repository to get your own f
 
 ## 📊 Report Showcase & Visual Preview
 
-Each generated report is fully standalone (works offline with embedded vector graphics), supports responsive light/dark themes, and delivers institutional-grade quantitative market analytics.
+Each generated report is fully standalone (works offline with embedded fonts and vector graphics) and supports responsive light/dark themes. Daily reports are a compact 8-section brief; weekly and monthly reports are the full edition (19 sections, including the sector heatmap, theme strength, cross-asset tracker, Fed path, calendar, earnings and sentiment panels). The screenshots below are from a monthly report in dark mode.
 
 ### Market Breadth & Internal Participation
-Vectorized S&P 500 constituent breadth tracking % of stocks above key moving averages (20/50/200 DMA), Advance/Decline ratios, Net 52-week Highs, Cap-Weight vs. Equal-Weight leadership spread (`SPY` vs. `RSP`), and the McClellan Oscillator:
+S&P 500 constituent breadth: % of stocks above the 20/50/200 DMA (with 1-year percentile context), Advance/Decline ratio, Net 52-week Highs, the Cap-Weight vs. Equal-Weight leadership spread (`SPY` vs. `RSP`), and the McClellan Oscillator:
 
 ![Market Breadth & Participation Matrix](./assets/preview_market_breadth.png)
 
 ### Sector Multi-Horizon Relative Return Heatmap
-All 11 Select Sector SPDR ETFs tracked dynamically across multiple time horizons (1-Day, 1-Week, 1-Month, 3-Month, and YTD) to identify capital rotation, momentum leadership, and tactical divergence:
+All 11 Select Sector SPDR ETFs across five horizons (1-Day, 1-Week, 1-Month, 3-Month, and YTD) to identify capital rotation, momentum leadership, and tactical divergence. Weekly and monthly reports pair it with a ranked relative-strength table:
 
 ![Sector Multi-Horizon Relative Return Heatmap](./assets/preview_sector_matrix.png)
 
 Generated reports are automatically saved to:
-- `reports/daily/YYYY-MM-DD.html`, `.md`, `.eml`
-- `reports/weekly/YYYY-MM-DD.html`, `.md`, `.eml`
-- `reports/monthly/YYYY-MM-DD.html`, `.md`, `.eml`
+- `reports/daily/YYYY-MM-DD.html` and `.md`
+- `reports/weekly/YYYY-MM-DD.html` and `.md`
+- `reports/monthly/YYYY-MM-DD.html` and `.md`
+
+An `.eml` file is written next to them only when you pass `--dry-run-email` (or `--email`). Each run also writes a `qa_report.md` into the period folder (see [Built-in QA Harness](#-built-in-qa-harness)).
 
 ---
 
@@ -135,34 +137,34 @@ You can customize weights, technical thresholds, chart dimensions, and universe 
 
 ## 🧠 Trend Scoring Engine
 
-The scoring engine evaluates indicator states, applies weighted votes, and normalizes them into a $[-1.0, +1.0]$ consensus score:
+The scoring engine groups indicators into five weighted categories. Each category scores in $[-1.0, +1.0]$ using continuous gradients (not hard +1/0/-1 cliffs), and the weighted sum becomes a five-band regime verdict. Weights and band edges live under `scorecard_categories` in [`config/config.yaml`](config/config.yaml).
 
-### 1. Technical Indicators (Weight 1.0)
-- **Price vs. 50 DMA**: Price > 50 DMA ⇒ `+1`; below ⇒ `-1`
-- **Price vs. 200 DMA**: Price > 200 DMA ⇒ `+1`; below ⇒ `-1`
-- **50 DMA vs. 200 DMA**: 50 DMA > 200 DMA ⇒ `+1`; below ⇒ `-1`
-- **MACD vs. Signal**: MACD Line > Signal Line ⇒ `+1`; below ⇒ `-1`
-- **VIX Regime**: VIX < 20 and falling ⇒ `+1`; VIX > 25 and rising ⇒ `-1`; neutral ⇒ `0`
-- **RSI(14)**: Caution flag if > 70 (Overbought) or < 30 (Oversold). *(Non-voting)*
+| Category | Weight | What it scores |
+| :--- | :---: | :--- |
+| **Trend / Price** | 30% | Price vs. 50/200 DMA, 50/200 cross, MACD, ADX; the weaker of S&P 500 and Nasdaq-100 |
+| **Market Breadth** | 20% | % above 50/200 DMA, net new highs, RSP vs. SPY leadership, A/D line, McClellan |
+| **Rates & Macro** | 20% | 10Y/2Y yield shifts and trends, 2s10s curve, real yield (10Y TIPS), dollar (DXY), crude shock, inflation and labor dynamics |
+| **Volatility & Risk** | 15% | VIX level and period shift, VIX term structure, high-yield credit spreads |
+| **Sentiment & Positioning** | 15% | Put/call ratio, AAII bull-bear spread, implied vs. realized vol (VRP) |
 
-### 2. Macroeconomic Indicators (Weight 0.5, Toggleable)
-- **10Y Yield Shift**: 10Y yield surging (> 15 bps) ⇒ `-1`; falling sharply ⇒ `+1`
-- **2s10s Yield Curve**: Inverted (10Y − 2Y < 0) ⇒ `-1`; normal (> 0) ⇒ `+1`
-- **Dollar Index (DXY)**: Sharp rise (> 1.0% over period) ⇒ `-1`
-- **Inflation Surprise**: Hotter than forecast ⇒ `-1`; cooler ⇒ `+1`
-- **Labor Surprise**: Strong jobs + inflation not hot ⇒ `+1`
+- Categories with fewer than 2 valid inputs (e.g. a missing feed) are dropped and the remaining weights are renormalized; the report says which category was dropped and why.
+- The verdict also reports borderline cases (within 0.03 of a band edge), category agreement, and how the verdict changes if each category is removed.
+- Event risk (e.g. a high-impact release within the configured window) can cap the posture.
 
-### 3. Market Breadth Indicators (Weight 0.5, Toggleable)
-- **Stocks Above 50 DMA**: > 60% ⇒ `+1`; < 40% ⇒ `-1`
-- **Stocks Above 200 DMA**: > 60% ⇒ `+1`; < 40% ⇒ `-1`
-- **Net New 52W Highs**: Positive and expanding ⇒ `+1`; strongly negative (≤ -10) ⇒ `-1`
-- **Equal-Weight Spread**: Cap-weight SPY beating RSP by > 1.0% ⇒ `-1` (Narrow Leadership); broad leadership ⇒ `+1`
-- **A/D Line Confirmation**: A/D line confirms index move ⇒ `+1`; diverging from index ⇒ `-1`
+### Verdict Bands (normalized score)
+- 🟢 **Risk-on**: score ≥ `+0.40`
+- 🟩 **Constructive**: `+0.15` ≤ score < `+0.40`
+- ⚪ **Neutral**: `-0.15` < score < `+0.15`
+- 🟠 **Cautious**: `-0.40` < score ≤ `-0.15`
+- 🔴 **Risk-off**: score ≤ `-0.40`
 
-### Verdict Thresholds
-- 🟢 **Bullish**: Normalized Score ≥ `+0.30`
-- ⚪ **Neutral**: `-0.30` < Score < `+0.30`
-- 🔴 **Bearish**: Normalized Score ≤ `-0.30`
+RSI(14) is shown as a caution flag (overbought > 70, oversold < 30) and does not vote.
+
+---
+
+## ✅ Built-in QA Harness
+
+After rendering, `qa_checks.py` runs 15 automated checks (T1–T13, R3, U1) against the generated HTML and section data: label/vote consistency, a single source of truth for cross-section numbers, run-to-run stability, chart coverage, duplicate-text and cross-reference lint, calendar sourcing, arithmetic and sanity bounds, impersonal-language compliance, and a reading-time budget. Results are written to `reports/<type>/qa_report.md`, and a failing check fails the build, so a broken report is never published silently.
 
 ---
 
@@ -184,10 +186,10 @@ Run automatically on trading days after the NYSE close (~4:30 PM ET):
 
 ### 2. GitHub Actions Workflow
 The repository includes an automated workflow at [`.github/workflows/market_report.yml`](.github/workflows/market_report.yml):
-- **Schedule**: Automatically runs at `21:00 UTC` Monday–Friday.
+- **Schedule**: Automatically runs at `21:30 UTC` Monday–Friday (≥ 30 minutes after the close in both EDT and EST). Each run generates the daily report and, on the last trading day of the week/month, the weekly/monthly report.
 - **DST & Calendar Intelligence**: Uses `exchange_calendars` to handle daylight saving shifts, market holidays (Good Friday, Thanksgiving, Christmas), and early closes cleanly.
-- **Data Caching**: Caches `.cache/` and `logs/` to minimize data transfer across runs.
-- **Artifacts & Publishing**: Automatically publishes the HTML report to GitHub Pages and stores 30-day report artifacts.
+- **Data Caching**: Caches `.cache/` and `logs/` between runs to stay under Yahoo rate limits; a manual run can tick `refresh_cache` to re-download all price bars.
+- **Artifacts & Publishing**: Publishes the latest HTML report to GitHub Pages and stores 30-day report artifacts. Scheduled runs create dry-run `.eml` files only; email is sent only if you trigger a manual run with `send_email` enabled.
 
 ---
 
@@ -220,53 +222,58 @@ uv pip install -e .
 market_report/
 ├── .github/
 │   └── workflows/
-│       └── market_report.yml # Automated GitHub Actions cron & Pages deployment
+│       └── market_report.yml    # Scheduled GitHub Actions run & Pages deployment
 ├── config/
-│   ├── config.yaml          # Indicator weights, scoring thresholds, charts, email settings
-│   └── settings.py         # Strongly-typed configuration loader
+│   ├── config.yaml              # Symbols, scorecard weights/bands, thresholds, filters, email
+│   └── settings.py              # Strongly-typed configuration loader
 ├── data/
-│   ├── base.py             # Abstract DataProvider interface
-│   ├── yfinance_provider.py# Resilient YFinance provider (caching, chunking, backoff)
-│   ├── constituents.py     # S&P 500 + Nasdaq-100 universe scraper & local cache
-│   ├── cache.py            # Local Parquet OHLCV caching engine
-│   ├── calendar.py         # NYSE/NASDAQ calendar (America/New_York, holidays)
-│   ├── macro_base.py       # Abstract EconCalendarProvider interface
-│   ├── fred_provider.py    # FRED API client with local JSON caching
-│   ├── calendar_provider.py# Finnhub economic & earnings calendar provider
-│   └── fomc.py             # FOMC rate target tracking and meeting schedule calendar
+│   ├── base.py                  # Abstract DataProvider interface
+│   ├── yfinance_provider.py     # YFinance provider (Parquet cache, chunking, backoff, rate-limit breaker)
+│   ├── constituents.py          # S&P 500 universe loader & local cache
+│   ├── cache.py                 # Local Parquet OHLCV caching engine
+│   ├── calendar.py              # NYSE calendar & period windows (daily/weekly/monthly)
+│   ├── macro_base.py            # Abstract EconCalendarProvider interface
+│   ├── fred_provider.py         # FRED client (yields, spreads, TIPS) with JSON caching
+│   ├── calendar_provider.py     # Finnhub economic & earnings calendar (built-in schedule fallback)
+│   ├── cot_provider.py          # CFTC Commitments of Traders positioning
+│   ├── fomc.py                  # FOMC rate target and meeting schedule
+│   ├── model_accountability.py  # Tracks past verdicts vs. realized outcomes
+│   └── cache/                   # Committed JSON caches (CAPE valuation, COT, accountability)
 ├── delivery/
-│   └── email_sender.py     # SMTP TLS delivery, inline CID charts, and .eml export
+│   └── email_sender.py          # SMTP TLS delivery, inline CID charts, and .eml export
 ├── indicators/
-│   ├── moving_averages.py  # 20/50/200 DMA & Golden/Death cross detection
-│   ├── momentum.py         # RSI(14) using Wilder's smoothing
-│   ├── trend.py            # MACD(12,26,9) & ADX(14) with +DI/-DI
-│   ├── breadth.py          # S&P 500 breadth (% above MAs, A/D, 52W H/L, RSP vs SPY)
-│   └── engine.py           # Unified technical computation pipeline
+│   ├── moving_averages.py       # 20/50/200 DMA & Golden/Death cross detection
+│   ├── momentum.py              # RSI(14) using Wilder's smoothing
+│   ├── trend.py                 # MACD(12,26,9) & ADX(14) with +DI/-DI
+│   ├── breadth.py               # S&P 500 breadth (% above MAs, A/D, 52W H/L, RSP vs SPY, McClellan)
+│   └── engine.py                # Unified technical computation (frozen TechnicalSnapshot)
 ├── scoring/
-│   ├── rules.py            # Technical, macro, and breadth voting rules (+1 / 0 / -1)
-│   └── engine.py           # Trend scoring, weight normalization, explainable verdict
-├── sections/
-│   ├── executive_summary.py# Verdict, score, and 3-5 line core posture
-│   ├── index_snapshot.py   # Major benchmark table & 20-day volume deltas
-│   ├── technicals.py       # SPX & NDX DMA/Cross/RSI/MACD/ADX tables
-│   ├── volatility.py       # VIX level, regime classification, and daily implied move
-│   ├── macro.py            # Economic releases, Fed policy, yields, cross-asset snapshot
-│   ├── sectors.py          # 11 SPDR sectors ranked by relative strength vs SPY
-│   ├── breadth.py          # % above MAs, Advance/Decline, 52W Highs/Lows, RSP vs SPY
-│   ├── movers.py           # Top 5 gainers / losers (Day, Week, Month)
-│   └── conclusion.py       # Transparent voting scorecard & key support/resistance levels
+│   ├── rules.py                 # Gradient scoring rules for the five scorecard categories
+│   └── engine.py                # Category weighting, regime verdict, sensitivity, explainability
+├── sections/                    # One module per report section; each returns a SectionResult
+│   ├── base.py                  # SectionResult + CanonicalFactsRegistry (cross-section source of truth)
+│   ├── executive_summary.py, what_changed.py, swing_regime.py, index_snapshot.py
+│   ├── technicals.py, breadth.py, volatility.py
+│   ├── sectors.py, theme_relative_strength.py, commodities_cross_asset.py
+│   ├── fed_path.py, forward_calendar.py, earnings.py, macro.py
+│   ├── movers.py, watchlist.py, sentiment_positioning.py
+│   ├── valuation.py, historical_analog.py
+│   └── conclusion.py            # Scorecard summary and outlook
 ├── storage/
-│   └── snapshots.py        # SQLite state store for period-over-period delta comparisons
+│   └── snapshots.py             # SQLite state store for period-over-period deltas
 ├── render/
-│   ├── charts.py           # Matplotlib chart generator (dark/light themes, transparent PNG)
-│   ├── markdown.py         # Clean Markdown report formatter
-│   └── html.py             # Standalone HTML report with embedded CSS & inline charts
-├── reports/                # Generated reports saved to /reports/{daily|weekly|monthly}/
-├── tests/                  # Unit test suite covering all indicators, calendar, and rendering
-├── report.py               # Main CLI executable and interactive wizard
-├── pyproject.toml          # Package build configuration and CLI entry points
-├── requirements.txt        # Pinned project dependencies
-└── run.sh / run.bat        # Automated one-click quickstart launchers
+│   ├── charts.py                # Matplotlib chart generator (PNG, used for email)
+│   ├── svg_charts.py            # Inline SVG charts for the HTML report
+│   ├── markdown.py              # Markdown report formatter
+│   ├── html.py                  # Standalone HTML report (embedded CSS, fonts, charts)
+│   └── fonts/                   # Fonts embedded into the HTML
+├── reports/                     # Generated output: reports/{daily|weekly|monthly}/ (git-ignored)
+├── tests/                       # Test suite (calendar, indicators, scoring, sections, rendering, QA)
+├── qa_checks.py                 # Post-generation QA harness (writes qa_report.md)
+├── report.py                    # Main CLI, interactive wizard, and report orchestrator
+├── pyproject.toml               # Package build configuration and CLI entry points
+├── requirements.txt             # Project dependencies (minimum versions)
+└── run.sh / run.bat             # One-click quickstart launchers
 ```
 
 ---
@@ -284,7 +291,8 @@ The test suite covers:
 - **Technical Indicators**: 20/50/200 DMA, Golden/Death crosses, Wilder's smoothed RSI(14), MACD(12,26,9), ADX(14).
 - **Macro & Rates**: Inflation MoM/YoY calculations, Nonfarm Payroll surprises, Real GDP QoQ, yield spread inversion.
 - **Market Breadth**: % above MAs, Advance/Decline counts, McClellan Oscillator, Net 52-week Highs/Lows.
-- **Charts & Reports**: Headless Matplotlib chart rendering, HTML generation, and MIME email builder.
+- **Scoring & Sections**: Category scorecard, regime verdicts, section builders, and cross-section consistency.
+- **Charts & Reports**: Headless Matplotlib chart rendering, HTML/Markdown generation, QA checks, and MIME email builder.
 
 ---
 
@@ -302,4 +310,4 @@ This project is licensed under the [MIT License](LICENSE).
 > * **No Investment Advice**: This software and its generated reports are designed purely for informational, research, and educational purposes. Nothing contained herein constitutes investment, financial, trading, accounting, or legal advice, nor does it constitute a recommendation, endorsement, or solicitation to buy, sell, hold, or trade any security, derivative, commodity, or financial instrument.
 > * **No Warranty & Limitation of Liability**: The software is provided "as is", without warranty of any kind, express or implied. Under no circumstances shall the authors, contributors, or copyright holders be held liable for any direct, indirect, incidental, consequential, special, or exemplary damages, or any financial losses, lost profits, or business interruption.
 > * **Risk of Trading**: Trading in equities, options, futures, and other financial instruments involves substantial risk of loss and is not suitable for every investor. Users must conduct their own independent due diligence and consult with a licensed professional financial adviser before making any investment decisions.
-> * **Third-Party Data & Trademarks**: Market data is retrieved via third-party providers (`yfinance`, FRED, Finnhub). Users are solely responsible for obtaining their own API keys and complying with the respective providers' Terms of Service. All product names, logos, index names (e.g., S&P 500®, Nasdaq-100®, Russell 2000®, Cboe VIX®), and trademarks belong to their respective owners.
+> * **Third-Party Data & Trademarks**: Market data is retrieved via third-party providers (`yfinance`, FRED, Finnhub, CFTC). Users are solely responsible for obtaining their own API keys and complying with the respective providers' Terms of Service. All product names, logos, index names (e.g., S&P 500®, Nasdaq-100®, Russell 2000®, Cboe VIX®), and trademarks belong to their respective owners.
