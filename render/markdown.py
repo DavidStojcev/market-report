@@ -214,8 +214,6 @@ def render_markdown(
     lines.append(f"**As of:** `{period.session_date}` close | **Period Window:** `{period.current_start}` to `{period.current_end}` | **Evaluation:** US/Eastern")
     if period.is_partial:
         lines.append(f"> ℹ️ **Partial Period Notice:** {period.notes}")
-    if _meta["warnings"]:
-        lines.append("> ⚠️ **Data Quality:** " + "; ".join(_warning_tags(_meta["warnings"])))
     # Full warning text + provenance stay collapsible: QA U1 budgets visible words only.
     lines.append("<details><summary>Data provenance & quality warnings</summary>\n")
     lines.append(

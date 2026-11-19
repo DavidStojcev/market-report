@@ -298,7 +298,7 @@ def _build_executive_brief(
 
     if rot is not None:
         lead_prefix = "Defensive rotation led by" if is_defensive_led else "Gains led by"
-        thing_3 = f"**Sector Leadership & Risk:** {lead_prefix} {leaders_2} while {laggards_2} lagged."
+        thing_3 = f"**Sector Leadership & Risk:** {lead_prefix} {leaders_2} while {laggards_2} lagged the tape."
     else:
         thing_3 = f"**Model Consensus & Risk:** {scorecard.verdict} composite ({scorecard.normalized_score:+.2f}); {scorecard.confidence or 'multi-factor weight of the evidence'}."
     if swing_data is not None:

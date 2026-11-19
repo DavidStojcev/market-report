@@ -70,5 +70,41 @@
         "range_low": 78.67
       }
     }
+  },
+  "2026-11-18": {
+    "as_of_date": "2026-11-18",
+    "posture": "DEFENSIVE",
+    "ranges": {
+      "CL=F": {
+        "close": 83.26,
+        "range_high": 97.6,
+        "range_low": 79.14
+      },
+      "GC=F": {
+        "close": 3741.9,
+        "range_high": 4030.16,
+        "range_low": 3654.79
+      },
+      "IWM": {
+        "close": 270.12,
+        "range_high": 282.53,
+        "range_low": 264.61
+      },
+      "QQQ": {
+        "close": 659.51,
+        "range_high": 707.61,
+        "range_low": 638.29
+      },
+      "SPY": {
+        "close": 730.2,
+        "range_high": 763.66,
+        "range_low": 717.76
+      },
+      "TLT": {
+        "close": 80.22,
+        "range_high": 81.87,
+        "range_low": 79.12
+      }
+    }
   }
 }

@@ -599,11 +599,7 @@ def render_html(
     rep_type_label = period.report_type.upper()
     trailing_text = _period_window_label(period).capitalize() + f" from the {period.baseline_date} close"
     _meta = _report_meta(sections)
-    _warn_html = (
-        '<div class="alert alert-warning" style="margin-top: 12px;">⚠️ <strong>Data Quality Warnings:</strong><ul style="margin: 6px 0 0 18px;">'
-        + "".join(f"<li>{html.escape(w)}</li>" for w in _meta["warnings"])
-        + "</ul></div>"
-    ) if _meta["warnings"] else ""
+    _warn_html = ""  # visible data-quality banner intentionally not published
 
     sidebar_html = _render_sidebar(period, sections)
     top10_html = _render_top10_ticker_strip(sections, period=period)

@@ -141,7 +141,7 @@ def _build_cross_strategy_lenses(
             rot_read = "Concentrated / Narrow"
         else:
             rot_read = "Selective Dispersion"
-        rot_syn = f"{p50_str}RSP vs SPY spread sits at {rot.rsp_vs_spy_spread:+.2f}% with {rot.rotation_summary.rstrip('.')}."
+        rot_syn = f"{p50_str}RSP vs SPY spread sits at {rot.rsp_vs_spy_spread:+.2f}% with {rot.rotation_summary.rstrip('.')} over the period."
     else:
         b_score = cat_breadth.score if cat_breadth else 0.0
         rot_read = "Supportive Breadth" if b_score >= 0.25 else ("Weak Breadth" if b_score <= -0.25 else "Mixed Breadth")
