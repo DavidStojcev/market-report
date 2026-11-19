@@ -27,6 +27,11 @@ on:
         required: false
         default: ''
         type: string
+      refresh_cache:
+        description: 'Re-download all price bars (--no-cache); failed downloads keep the cached bars'
+        required: false
+        default: false
+        type: boolean
       send_email:
         description: 'Send email notification via SMTP'
         required: false
@@ -73,11 +78,9 @@ jobs:
           path: |
             .cache/
             logs/
-          # v2: start from a fresh download once - bars cached before the split-detection fix may
-          # contain genuine large moves that the old heuristic rescaled away.
-          key: market-report-cache-v2-${{ runner.os }}-${{ github.run_id }}
+          key: market-report-cache-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
-            market-report-cache-v2-${{ runner.os }}-
+            market-report-cache-${{ runner.os }}-
 
       - name: Execute Market Report Generator
         env:
@@ -97,6 +100,9 @@ jobs:
             fi
             if [ -n "${{ inputs.tickers }}" ]; then
               CMD="$CMD --tickers ${{ inputs.tickers }}"
+            fi
+            if [ "${{ inputs.refresh_cache }}" = "true" ]; then
+              CMD="$CMD --no-cache"
             fi
             if [ "${{ inputs.send_email }}" = "true" ]; then
               CMD="$CMD --email"
