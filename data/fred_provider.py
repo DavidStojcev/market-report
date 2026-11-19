@@ -142,6 +142,17 @@ class FredProvider:
         """Fetch historical observations for a series, respecting cache and as_of_date."""
         df = self._read_cache(series_id)
 
+        # A 7-day TTL let a daily report show yields up to a week old.  If the cached series ends
+        # well before the report date and the cache file is not brand new, try a refresh first
+        # (keep the cached copy if the download fails; the report flags the staleness).
+        if df is not None and not df.empty and as_of_date:
+            lag_days = (pd.to_datetime(as_of_date) - df["date"].max()).days
+            age_hours = (time.time() - self._get_cache_path(series_id).stat().st_mtime) / 3600.0
+            if lag_days > 4 and age_hours > 6:
+                fresh = self._fetch_from_network(series_id)
+                if fresh is not None and not fresh.empty:
+                    df = fresh
+
         if df is None or df.empty:
             df = self._fetch_from_network(series_id)
 

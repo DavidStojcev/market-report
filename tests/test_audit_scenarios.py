@@ -270,3 +270,18 @@ def test_no_cache_flag_replaces_price_cache(tmp_path, monkeypatch):
     assert calls == [["ABC"]]
     assert refreshed["ABC"]["Close"].iloc[-1] == pytest.approx(110.0)
     assert ParquetCache(str(tmp_path)).read_bars("ABC")["Close"].iloc[-1] == pytest.approx(110.0)
+
+
+def test_fred_cache_refreshes_when_series_is_behind_report_date(tmp_path, monkeypatch):
+    import os, time as _time
+    fp = FredProvider(cache_dir=str(tmp_path), cache_days=7)
+    stale = pd.DataFrame({"date": pd.to_datetime(["2026-11-06", "2026-11-12"]), "value": [4.86, 5.10]})
+    fp._write_cache("DGS10", stale)
+    old = _time.time() - 8 * 3600
+    os.utime(fp._get_cache_path("DGS10"), (old, old))
+    fresh = pd.DataFrame({"date": pd.to_datetime(["2026-11-12", "2026-11-17", "2026-11-18"]), "value": [5.10, 5.05, 5.02]})
+    monkeypatch.setattr(FredProvider, "_fetch_from_network", lambda self, sid: fresh)
+    assert fp.fetch_series("DGS10", as_of_date="2026-11-18")["date"].max() == pd.Timestamp("2026-11-18")
+    # Up-to-date cache is used as-is (no refetch)
+    monkeypatch.setattr(FredProvider, "_fetch_from_network", lambda self, sid: (_ for _ in ()).throw(AssertionError("refetched")))
+    assert fp.fetch_series("DGS10", as_of_date="2026-11-13")["date"].max() == pd.Timestamp("2026-11-12")
