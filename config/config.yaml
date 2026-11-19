@@ -133,7 +133,7 @@ breadth:
 data:
   cache_dir: ".cache"
   constituents_cache_days: 7
-  request_delay_seconds: 0.05
+  request_delay_seconds: 1.0   # pause between Yahoo batch downloads (concurrency is capped at 4 per batch)
   max_retries: 3
   backoff_factor: 1.5
   batch_size: 50

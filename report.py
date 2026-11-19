@@ -874,6 +874,12 @@ def generate_market_report(
         vix_sym=vix_sym,
         sec_macro=sec_macro,
     )
+    if getattr(provider, "throttled", False):
+        data_warnings.insert(0,
+            f"Yahoo Finance throttled downloads ({provider.throttle_note}); remaining symbols use previously "
+            "cached bars. Re-run later to complete the update."
+        )
+    logger.info("Yahoo requests this run: ~%d symbol-requests", getattr(provider, "network_requests", 0))
     if not getattr(calendar_provider, "api_key", ""):
         data_warnings.append(
             "Economic calendar uses the built-in release schedule (no Finnhub key): dates follow official "

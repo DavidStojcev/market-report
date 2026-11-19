@@ -165,16 +165,18 @@ def _warning_tags(warnings: List[str]) -> List[str]:
     tags = []
     for w in warnings:
         wl = w.lower()
-        if wl.startswith("headline price data"):
-            tags.append("**headline prices not at session close**")
+        if wl.startswith("yahoo finance throttled"):
+            tags.append("**Yahoo-throttled prices**")
+        elif wl.startswith("headline price data"):
+            tags.append("**stale headline prices**")
         elif "fred" in wl and "lag" in wl:
-            tags.append("rates/credit lagged 1 day (FRED)")
+            tags.append("FRED 1-day lag")
         elif "nasdaq-100 constituent" in wl:
-            tags.append("movers S&P 500 only")
+            tags.append("S&P-500-only movers")
         elif "economic calendar" in wl:
-            tags.append("static econ calendar")
+            tags.append("static calendar")
         elif wl.startswith("constituent prices"):
-            tags.append("some constituents stale")
+            tags.append("stale constituents")
         elif "macro/rates" in wl:
             tags.append("**macro/rates unavailable**")
         else:

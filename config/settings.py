@@ -58,7 +58,7 @@ class MoversConfig:
 class DataConfig:
     cache_dir: str = ".cache"
     constituents_cache_days: int = 7
-    request_delay_seconds: float = 0.05
+    request_delay_seconds: float = 1.0
     max_retries: int = 3
     backoff_factor: float = 1.5
     batch_size: int = 50
@@ -315,7 +315,7 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
     data_cfg = DataConfig(
         cache_dir=dat.get("cache_dir", ".cache"),
         constituents_cache_days=dat.get("constituents_cache_days", 7),
-        request_delay_seconds=dat.get("request_delay_seconds", 0.05),
+        request_delay_seconds=dat.get("request_delay_seconds", 1.0),
         max_retries=dat.get("max_retries", 3),
         backoff_factor=dat.get("backoff_factor", 1.5),
         batch_size=dat.get("batch_size", 50),

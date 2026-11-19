@@ -93,7 +93,10 @@ def fetch_sp500_forward_pe(
             except Exception as e:
                 logger.debug("Error retrieving info for %s from data_provider: %s", sym, e)
 
-    # 2. Try direct yfinance query
+    # 2. Try direct yfinance query (.info costs several requests per symbol and has not returned a
+    # forward P/E for index ETFs; attempt at most once per day and never while Yahoo is throttling)
+    if data_provider is not None and hasattr(data_provider, "once_per_day") and not data_provider.once_per_day("forward_pe_info"):
+        return None, "n/a (source unavailable)"
     for sym in candidates:
         try:
             t = yf.Ticker(sym)

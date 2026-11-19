@@ -45,3 +45,10 @@ def classic_rsi_series() -> pd.Series:
     ]
     dates = pd.date_range("2026-01-01", periods=len(prices), freq="D")
     return pd.Series(prices, index=dates)
+
+
+@pytest.fixture(autouse=True)
+def _no_yahoo_backoff_waits(monkeypatch):
+    """Throttle backoff waits (20s/60s) are for real runs; keep tests fast if a fetch comes back empty."""
+    from data.yfinance_provider import YFinanceDataProvider
+    monkeypatch.setattr(YFinanceDataProvider, "THROTTLE_WAITS", (0.0, 0.0))

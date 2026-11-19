@@ -61,8 +61,10 @@ def derive_fed_rate_probabilities(
                 except Exception as e:
                     logger.debug("Failed fetching %s from data_provider: %s", sym, e)
 
-        # 2. Try directly via YFinanceDataProvider if still None
-        if df is None:
+        # 2./3. Fallbacks only when no shared provider was supplied: a second provider instance or raw
+        # yfinance would bypass the shared provider's throttle circuit breaker and repeat the same
+        # failing request (ZQ contracts often have no Yahoo data) on every run.
+        if df is None and data_provider is None:
             try:
                 from data.yfinance_provider import YFinanceDataProvider
                 prov = YFinanceDataProvider()
@@ -82,7 +84,7 @@ def derive_fed_rate_probabilities(
                 logger.debug("Failed direct YFinanceDataProvider lookup for ZQ: %s", e)
 
         # 3. Fallback to direct yfinance query
-        if df is None:
+        if df is None and data_provider is None:
             import yfinance as yf
             for sym in candidates:
                 try:
