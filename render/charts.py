@@ -36,17 +36,17 @@ from sections.sectors import SectorPerformanceRow
 
 logger = logging.getLogger(__name__)
 
-# User's approved color palette & visual design tokens
-AMBER_HONEY = "#eca400"      # 50 DMA line, 20d Volume line, Key Pivot / Warning
-ROSY_COPPER = "#db504a"      # 200 DMA line, Down-volume bars, Drawdowns / Bearish
-DARK_SLATE_GREY = "#2c514c"  # Neutral baseline, structural card accents
-TROPICAL_TEAL = "#56a3a6"    # S&P 500 price, Up-volume bars, Expansion / Bullish
-DEEP_WALNUT = "#56351e"      # Subtle warm structural accents
+# Forest & Clay palette & visual design tokens
+AMBER_HONEY = "#E0A93B"      # 50 DMA line, 20d Volume line, Key Pivot / Warning
+ROSY_COPPER = "#D4684F"      # 200 DMA line, Down-volume bars, Drawdowns / Bearish
+DARK_SLATE_GREY = "#1f4d3a"  # Neutral baseline, structural card accents
+TROPICAL_TEAL = "#4CAF74"    # S&P 500 price, Up-volume bars, Expansion / Bullish
+DEEP_WALNUT = "#26332B"      # Subtle warm structural accents
 
 COLOR_TEXT = "#fcfcfc"
-COLOR_MUTED = "#9ab3af"
-COLOR_GRID = "#20312e"
-COLOR_SPINE = "#2c514c"
+COLOR_MUTED = "#a9bdb0"
+COLOR_GRID = "#223228"
+COLOR_SPINE = "#1f4d3a"
 
 # Backward-compatibility aliases for other existing charts
 COLOR_GREEN = TROPICAL_TEAL
@@ -58,7 +58,7 @@ COLOR_YELLOW = AMBER_HONEY
 
 # Custom Diverging Colormap (Rosy Copper -> Dark Slate -> Tropical Teal -> Luminous Mint)
 CMAP_DIVERGING = mcolors.LinearSegmentedColormap.from_list(
-    "palette_diverging", [ROSY_COPPER, DARK_SLATE_GREY, TROPICAL_TEAL, "#2ee0d3"], N=256
+    "palette_diverging", [ROSY_COPPER, DARK_SLATE_GREY, TROPICAL_TEAL, "#8CC9A3"], N=256
 )
 
 
@@ -110,7 +110,7 @@ def _encode_fig(fig: plt.Figure, output_path: Optional[Path] = None, dpi: int = 
     clean_svg = clean_svg.replace(COLOR_MUTED, "var(--text-muted)")
     clean_svg = clean_svg.replace(COLOR_GRID, "var(--border)")
     clean_svg = clean_svg.replace(COLOR_SPINE, "var(--border)")
-    clean_svg = clean_svg.replace("#131b2e", "transparent")
+    clean_svg = clean_svg.replace("#17231c", "transparent")
 
     # 2. Export PNG
     png_buf = io.BytesIO()
@@ -231,7 +231,7 @@ def generate_index_technicals_chart(
         ax.set_ylim(y_min, y_max)
         date_pad = max(10, int(lookback_bars * 0.12))
         ax.set_xlim(disp_idx[0], disp_idx[-1] + pd.Timedelta(days=date_pad))
-        ax.legend(loc="upper left", facecolor="#131b2e", edgecolor=COLOR_SPINE, labelcolor=COLOR_TEXT, fontsize=8, ncol=4)
+        ax.legend(loc="upper left", facecolor="#17231c", edgecolor=COLOR_SPINE, labelcolor=COLOR_TEXT, fontsize=8, ncol=4)
 
         if ax_vol is not None:
             vol = disp_sub["Volume"] / 1_000_000.0
@@ -379,7 +379,7 @@ def generate_breadth_trend_chart(
         ax.set_title(title, color=COLOR_TEXT, fontsize=12, fontweight="bold", pad=10)
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d" if lookback_bars < 180 else "%b %Y"))
         fig.autofmt_xdate(rotation=20)
-        ax.legend(loc="lower left", facecolor="#131b2e", edgecolor=COLOR_SPINE, labelcolor=COLOR_TEXT, fontsize=8)
+        ax.legend(loc="lower left", facecolor="#17231c", edgecolor=COLOR_SPINE, labelcolor=COLOR_TEXT, fontsize=8)
 
         b64, svg = _encode_fig(fig, output_path)
         return GeneratedChart(key=chart_key, title=title, caption=caption, file_path=str(output_path) if output_path else None, base64_data=b64, svg_content=svg)
@@ -430,7 +430,7 @@ def generate_vix_chart(
         ax.plot(idx, vix_vals, color=COLOR_AMBER, linewidth=1.8, label=f"VIX Implied ({vix_vals.iloc[-1]:.2f})")
         if rv20 is not None:
             last_rv = float(rv20.dropna().iloc[-1])
-            ax.plot(idx, rv20, color="#60a5fa", linewidth=1.4, linestyle="--", label=f"20D Realized Vol ({last_rv:.2f}%)")
+            ax.plot(idx, rv20, color="#9A6B3F", linewidth=1.4, linestyle="--", label=f"20D Realized Vol ({last_rv:.2f}%)")
 
         ax.axhline(20, color=COLOR_YELLOW, linestyle="--", linewidth=1.0, alpha=0.7, label="Cautious Boundary (20.0)")
         ax.axhline(25, color=COLOR_RED, linestyle="--", linewidth=1.0, alpha=0.7, label="Elevated Fear (25.0)")
@@ -442,7 +442,7 @@ def generate_vix_chart(
         ax.set_ylabel("Index Level / Annualized Vol (%)", color=COLOR_MUTED, fontsize=9)
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d" if lookback_bars < 180 else "%b %Y"))
         fig.autofmt_xdate(rotation=20)
-        ax.legend(loc="upper right", facecolor="#131b2e", edgecolor=COLOR_SPINE, labelcolor=COLOR_TEXT, fontsize=8)
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.22), ncol=2, frameon=False, labelcolor=COLOR_TEXT, fontsize=8)
 
         b64, svg = _encode_fig(fig, output_path)
         return GeneratedChart(key=chart_key, title=title, caption=caption, file_path=str(output_path) if output_path else None, base64_data=b64, svg_content=svg)
@@ -495,7 +495,7 @@ def generate_rates_curve_chart(
         ax1.plot(y10_dates, y10_vals, color=COLOR_BLUE, linewidth=1.8, label=f"10Y Yield ({y10_vals[-1]:.2f}%)")
         ax1.set_ylabel("Yield (%)", color=COLOR_MUTED, fontsize=8)
         ax1.set_title(title, color=COLOR_TEXT, fontsize=12, fontweight="bold", pad=8)
-        ax1.legend(loc="upper left", facecolor="#131b2e", edgecolor=COLOR_SPINE, labelcolor=COLOR_TEXT, fontsize=8)
+        ax1.legend(loc="upper left", facecolor="#17231c", edgecolor=COLOR_SPINE, labelcolor=COLOR_TEXT, fontsize=8)
 
         # 2s10s Spread in bps
         spread_bps = s2s10_vals * 100.0
@@ -505,7 +505,7 @@ def generate_rates_curve_chart(
         ax2.set_ylabel("Spread (bps)", color=COLOR_MUTED, fontsize=8)
         ax2.xaxis.set_major_formatter(mdates.DateFormatter("%b %d" if lookback_days < 200 else "%b %Y"))
         fig.autofmt_xdate(rotation=20)
-        ax2.legend(loc="lower left", facecolor="#131b2e", edgecolor=COLOR_SPINE, labelcolor=COLOR_TEXT, fontsize=8)
+        ax2.legend(loc="lower left", facecolor="#17231c", edgecolor=COLOR_SPINE, labelcolor=COLOR_TEXT, fontsize=8)
 
         fig.subplots_adjust(hspace=0.15)
         b64, svg = _encode_fig(fig, output_path)
@@ -973,7 +973,7 @@ def generate_net_liquidity_vs_spx_chart(
 
         lines = line1 + line2
         labels = [l.get_label() for l in lines]
-        ax1.legend(lines, labels, loc="upper left", facecolor="#131b2e", edgecolor=COLOR_SPINE, labelcolor=COLOR_TEXT, fontsize=8)
+        ax1.legend(lines, labels, loc="upper left", facecolor="#17231c", edgecolor=COLOR_SPINE, labelcolor=COLOR_TEXT, fontsize=8)
 
         ax1.set_title(title, color=COLOR_TEXT, fontsize=12, fontweight="bold", pad=10)
         ax1.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))

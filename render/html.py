@@ -1,6 +1,8 @@
 """Self-contained HTML report generator with inline CSS and light/dark mode."""
 
 import html
+import base64
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from data.calendar import PeriodInfo
 from indicators.breadth import format_percentile_ordinal
@@ -236,8 +238,8 @@ def _render_sidebar(period: PeriodInfo, sections: List[SectionResult]) -> str:
             <h1>Market Briefing</h1>
             <p>Report Date: {period.session_date}</p>
             <div style="margin-top: 8px; display: flex; align-items: center; gap: 6px;">
-                <span style="width: 6px; height: 6px; border-radius: 50%; background: var(--tropical-teal); display: inline-block;"></span>
-                <span style="font-size: 0.7rem; font-weight: 700; color: var(--tropical-teal);">LIVE DATA</span>
+                <span style="width: 6px; height: 6px; border-radius: 50%; background: var(--accent-key); display: inline-block;"></span>
+                <span style="font-size: 0.7rem; font-weight: 700; color: var(--accent-key);">LIVE DATA</span>
             </div>
         </div>
 
@@ -530,6 +532,36 @@ def _render_top10_ticker_strip(sections: List[SectionResult], period: Optional[P
     """
 
 
+_FONT_DIR = Path(__file__).parent / "fonts"
+_FONT_FACES = (
+    ("Playfair Display", "PlayfairDisplay.woff2", "700 900"),
+    ("Source Sans 3", "SourceSans3.woff2", "400 700"),
+    ("Roboto Mono", "RobotoMono.woff2", "500 700"),
+)
+_FONT_CSS_CACHE: Optional[str] = None
+
+
+def _font_face_css() -> str:
+    """Return @font-face rules with base64-embedded woff2 fonts (offline/email safe)."""
+    global _FONT_CSS_CACHE
+    if _FONT_CSS_CACHE is not None:
+        return _FONT_CSS_CACHE
+    rules = []
+    for family, fname, weight in _FONT_FACES:
+        try:
+            data = base64.b64encode((_FONT_DIR / fname).read_bytes()).decode("ascii")
+        except OSError:
+            continue  # falls back to system fonts in the stack
+        rules.append(
+            "@font-face {{ font-family: '{f}'; font-weight: {w}; font-style: normal; "
+            "font-display: swap; src: url(data:font/woff2;base64,{d}) format('woff2'); }}".format(
+                f=family, w=weight, d=data
+            ).replace("{{", "{").replace("}}", "}")
+        )
+    _FONT_CSS_CACHE = " ".join(rules)
+    return _FONT_CSS_CACHE
+
+
 
 def _report_meta(sections: List[SectionResult]) -> Dict[str, Any]:
     """Data-quality warnings and generation timestamp carried by the footer section."""
@@ -556,6 +588,7 @@ def render_html(
 ) -> str:
     """Render self-contained HTML market report."""
     rep_title = f"{period.report_type.capitalize()} US Market Report"
+    font_face_css = _font_face_css()
 
     # Build Jump-to navigation options from report sections
     jump_options = []
@@ -632,22 +665,22 @@ def render_html(
             v_low = d.verdict.lower()
             if v_low in ("bullish", "risk-on", "constructive"):
                 v_class = "badge-green"
-                banner_border = "var(--tropical-teal)"
+                banner_border = "var(--accent-key)"
             elif v_low in ("bearish", "risk-off", "cautious"):
                 v_class = "badge-red"
-                banner_border = "var(--rosy-copper)"
+                banner_border = "var(--terracotta)"
             else:
                 v_class = "badge-amber"
-                banner_border = "var(--amber-honey)"
+                banner_border = "var(--ochre)"
             
             regime_callout_html = ""
             if d.forward_outlook:
                 reg_name = d.regime_summary or "Active Macro Regime"
                 regime_callout_html = f"""
-                <div class="regime-callout-card" style="margin-top: 16px; padding: 14px 18px; border-radius: 8px; background: var(--bg-card-subtle); border-left: 4px solid var(--tropical-teal);">
+                <div class="regime-callout-card" style="margin-top: 16px; padding: 14px 18px; border-radius: 8px; background: var(--bg-card-subtle); border-left: 4px solid var(--accent-key);">
                     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
                         <span style="font-size: 1.1rem;">🧭</span>
-                        <span style="font-weight: 700; font-size: 0.82rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--tropical-teal);">Macro Regime &amp; Forward Implications: {reg_name}</span>
+                        <span style="font-weight: 700; font-size: 0.82rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent-key);">Macro Regime &amp; Forward Implications: {reg_name}</span>
                     </div>
                     <div style="font-size: 0.90rem; line-height: 1.5; color: var(--text-main);">{d.forward_outlook}</div>
                 </div>
@@ -673,9 +706,9 @@ def render_html(
                     brief_card_cls = "morning-brief-card"
                     brief_badge = "⚡ 30-Second Brief &amp; Bottom Line"
                 brief_html = f"""
-                <div class="{brief_card_cls}" style="margin-top: 16px; padding: 20px 24px; border-radius: 12px; background: linear-gradient(135deg, rgba(236, 164, 0, 0.13), rgba(44, 81, 76, 0.05)); border: 1.5px solid rgba(236, 164, 0, 0.55); border-left: 6px solid var(--amber-honey); box-shadow: 0 6px 18px rgba(86, 53, 30, 0.08);">
+                <div class="{brief_card_cls}" style="margin-top: 16px; padding: 20px 24px; border-radius: 12px; background: var(--bg-card); border: 1.5px solid var(--forest); border-left: 6px solid var(--ochre); box-shadow: var(--shadow-key);">
                     <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">
-                        <span style="font-weight: 800; font-size: 0.95rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--amber-honey);">{brief_badge}</span>
+                        <span style="font-weight: 800; font-size: 0.95rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ochre);">{brief_badge}</span>
                         <span style="font-size: 0.95rem; font-weight: 700; color: var(--text-main);">{brief.headline_takeaway}</span>
                     </div>
                     <div style="margin-bottom: 14px;">
@@ -685,9 +718,9 @@ def render_html(
                         </ul>
                     </div>
                     <div style="display: grid; grid-template-columns: 1fr; gap: 10px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 0.95rem; line-height: 1.52; color: var(--text-main);">
-                        <div><strong style="color: var(--tropical-teal);">What Happened:</strong> {brief.what_happened}</div>
-                        <div><strong style="color: var(--tropical-teal);">What It Means:</strong> {brief.what_it_means}</div>
-                        <div style="padding: 10px 14px; border-radius: 8px; background: rgba(236, 164, 0, 0.14); border-left: 4px solid var(--amber-honey); font-size: 0.98rem;"><strong style="color: var(--amber-honey);">The Bottom Line:</strong> <strong>{brief.bottom_line}</strong></div>
+                        <div><strong style="color: var(--accent-key);">What Happened:</strong> {brief.what_happened}</div>
+                        <div><strong style="color: var(--accent-key);">What It Means:</strong> {brief.what_it_means}</div>
+                        <div style="padding: 10px 14px; border-radius: 8px; background: rgba(201, 138, 27, 0.14); border-left: 4px solid var(--ochre); font-size: 0.98rem;"><strong style="color: var(--ochre);">The Bottom Line:</strong> <strong>{brief.bottom_line}</strong></div>
                     </div>
                 </div>
                 """
@@ -748,10 +781,17 @@ def render_html(
                     mime = "image/svg+xml" if cotd_file.suffix.lower() == ".svg" else "image/png"
                     b64 = base64.b64encode(cotd_file.read_bytes()).decode("ascii")
                     cotd_src = f"data:{mime};base64,{b64}"
+                # Prefer the theme-aware inline SVG (CSS-variable colors) over the static PNG,
+                # whose transparent background/light text is unreadable on the light theme.
+                _stem_chart = (charts or {}).get(cotd_file.stem)
+                if _stem_chart is not None and getattr(_stem_chart, "svg_content", ""):
+                    cotd_visual = f'<div class="chart-svg-wrapper">{_stem_chart.svg_content}</div>'
+                else:
+                    cotd_visual = f'<img src="{cotd_src}" alt="{cotd_title}" class="report-img" style="max-width: 100%; border-radius: 6px; border: 1px solid var(--border);">'
                 cotd_html = f"""
                 <div class="chart-container" style="margin-top: 20px;">
                     <h4 style="font-size: 14px; font-weight: 700; margin-bottom: 8px;">{cotd_title}</h4>
-                    <img src="{cotd_src}" alt="{cotd_title}" class="report-img" style="max-width: 100%; border-radius: 6px; border: 1px solid var(--border);">
+                    {cotd_visual}
                     <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px; font-style: italic;">{cotd.annotation}</div>
                 </div>
                 """
@@ -832,17 +872,53 @@ def render_html(
         # Section: What Changed (Executive Deltas vs Prior Report)
         elif isinstance(sec.data, WhatChangedData):
             w_data: WhatChangedData = sec.data
+            _wc_labels = {
+                "daily": ("Prior session", "Today vs. the previous trading session"),
+                "weekly": ("Last week", "This week vs. last week"),
+                "monthly": ("Last month", "This month vs. last month"),
+            }
+            _prior_hdr, _cmp_txt = _wc_labels.get(period.report_type, ("Prior period", "This period vs. the prior period"))
+            _what_is = {
+                "Macro & Micro Trend Score": "The report's overall market-health score, from -1 (bearish) to +1 (bullish).",
+                "High-Yield Credit OAS Spread": "Extra yield that risky companies pay over safe bonds. Low means investors are calm.",
+                "S&P 500 % Above 50-Day Moving Average": "Share of S&P 500 stocks trading above their own 50-day average. Higher means broader strength.",
+                "Tech vs. Broad Market Divergence": "How far the Nasdaq-100 has pulled ahead of (or behind) the S&P 500, measured against each one's 50-day average.",
+                "10-Year Treasury Yield": "The benchmark interest rate. Rising rates tend to pressure stock valuations.",
+                "CBOE VIX & Term Ratio (1M/3M)": "The market's fear gauge, and whether near-term fear exceeds longer-term fear.",
+            }
+            _prior_short = lambda v: "n/a" if str(v).startswith("n/a") else v
+            n_good = sum(1 for d in w_data.deltas if d.valence == "positive")
+            n_bad = sum(1 for d in w_data.deltas if d.valence == "negative")
+            n_flat = len(w_data.deltas) - n_good - n_bad
+            if n_good > n_bad:
+                _net_cls, _net_txt = "alert-info", "Net: conditions improved"
+            elif n_bad > n_good:
+                _net_cls, _net_txt = "alert-danger", "Net: conditions weakened"
+            else:
+                _net_cls, _net_txt = "alert-warning", "Net: conditions were mixed"
+
             delta_rows = []
             for d in w_data.deltas:
-                val_class = "text-green font-bold" if d.valence == "positive" else ("text-red font-bold" if d.valence == "negative" else "text-muted font-bold")
-                delta_sign = "+" if (d.delta_str and not d.delta_str.startswith(("+", "-", "—"))) else ""
-                formatted_delta = f"{delta_sign}{d.delta_str}" if d.delta_str != "—" else "—"
-                sub_detail = f'<div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">{d.detail}</div>' if d.detail else ""
+                ds = (d.delta_str or "").strip()
+                arrow = "&#9650;" if ds.startswith("+") else ("&#9660;" if ds.startswith("-") else "&#9679;")
+                if d.valence == "positive":
+                    pill_cls, pill_txt = "badge-green", "Favorable for stocks"
+                elif d.valence == "negative":
+                    pill_cls, pill_txt = "badge-red", "Unfavorable for stocks"
+                else:
+                    pill_cls, pill_txt = "badge-amber", "Little changed"
+                desc = _what_is.get(d.name) or d.detail or ""
+                sub_detail = f'<div class="wc-desc">{desc}</div>' if desc else ""
+                cur = d.current_val.replace("))", ")")
                 delta_rows.append(f"""
                 <tr>
-                    <td><strong>{d.name}</strong>{sub_detail}</td>
-                    <td class="text-right font-mono font-bold">{d.current_val}</td>
-                    <td class="text-right font-mono {val_class}">{formatted_delta}</td>
+                    <td><strong class="wc-name">{d.name}</strong>{sub_detail}</td>
+                    <td class="text-right font-mono wc-prior">{_prior_short(d.prior_val)}</td>
+                    <td class="text-right font-mono wc-now">{cur}</td>
+                    <td class="text-right wc-change">
+                        <div class="font-mono wc-delta {'text-green' if d.valence == 'positive' else ('text-red' if d.valence == 'negative' else '')}">{arrow} {ds if ds else '&mdash;'}</div>
+                        <span class="badge {pill_cls} wc-pill">{pill_txt}</span>
+                    </td>
                 </tr>
                 """)
 
@@ -850,25 +926,35 @@ def render_html(
             if w_data.single_biggest_risk:
                 risk_html = f"""
                 <div class="alert alert-warning" style="margin-top: 14px;">
-                    <strong style="display: block; margin-bottom: 2px;">⚠️ Single Biggest Forward Risk:</strong>
+                    <strong style="display: block; margin-bottom: 2px;">&#9888;&#65039; Single Biggest Forward Risk:</strong>
                     {w_data.single_biggest_risk}
                 </div>
                 """
 
             body_html.append(f"""
+            <div class="alert {_net_cls}" style="margin: 0 0 12px 0;">
+                <strong>{_net_txt}.</strong> {_cmp_txt}: {n_good} improved, {n_bad} weakened, {n_flat} little changed.
+            </div>
             <div class="table-container">
-                <table class="report-table">
+                <table class="report-table wc-table">
                     <thead>
                         <tr>
-                            <th>Metric</th>
-                            <th class="text-right">Current Status</th>
-                            <th class="text-right">Period &Delta;</th>
+                            <th>Indicator</th>
+                            <th class="text-right">{_prior_hdr}</th>
+                            <th class="text-right">Now</th>
+                            <th class="text-right">Change</th>
                         </tr>
                     </thead>
                     <tbody>
                         {''.join(delta_rows)}
                     </tbody>
                 </table>
+            </div>
+            <div class="wc-key">
+                <strong>How to read this:</strong> &#9650;/&#9660; show whether a number went up or down; the colored label says whether that move is good or bad for stocks.
+                <abbr title="Basis points: 100 bps = 1 percentage point">bps</abbr> = basis points (100 bps = 1%).
+                <abbr title="Option-Adjusted Spread: extra yield over Treasuries">OAS</abbr> = credit spread over Treasuries.
+                <abbr title="Daily moving average over the last 50 trading days">50-day average</abbr> = a common trend line.
             </div>
             {risk_html}
             """)
@@ -884,13 +970,13 @@ def render_html(
 
             if sg.posture == "FULL":
                 posture_badge_cls = "badge-green"
-                banner_border = "var(--tropical-teal)"
+                banner_border = "var(--accent-key)"
             elif sg.posture in ("REDUCED", "SELECTIVE"):
                 posture_badge_cls = "badge-amber"
-                banner_border = "var(--amber-honey)"
+                banner_border = "var(--ochre)"
             else:
                 posture_badge_cls = "badge-red"
-                banner_border = "var(--rosy-copper)"
+                banner_border = "var(--terracotta)"
 
             macro_sec_ref = sec_by_type.get(MacroSectionData)
             macro_ref_txt = f"Section {macro_sec_ref.section_num}" if macro_sec_ref else "macro regime signals"
@@ -917,9 +1003,9 @@ def render_html(
             pt = getattr(sg, "posture_triggers", None)
             if pt is not None:
                 triggers_html = f"""
-                <div style="margin-top: 16px; padding: 14px 18px; border-radius: 10px; background: var(--bg-card-subtle); border: 1px solid var(--border); border-left: 4px solid var(--tropical-teal);">
+                <div style="margin-top: 16px; padding: 14px 18px; border-radius: 10px; background: var(--bg-card-subtle); border: 1px solid var(--border); border-left: 4px solid var(--accent-key);">
                     <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 8px;">
-                        <span style="font-weight: 700; font-size: 0.80rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--tropical-teal);">Exposure Sizing &amp; Regime Flip Triggers</span>
+                        <span style="font-weight: 700; font-size: 0.80rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent-key);">Exposure Sizing &amp; Regime Flip Triggers</span>
                         <span class="badge badge-neutral">{pt.target_beta_band}</span>
                     </div>
                     <div style="display: grid; grid-template-columns: 1fr; gap: 6px; font-size: 0.86rem; line-height: 1.45; color: var(--text-main);">
@@ -950,7 +1036,7 @@ def render_html(
                         <td class="text-center font-mono" style="min-width: 90px;">
                             <div style="font-size: 11px; margin-bottom: 3px;">{rr.position_pct:.0f}% <span style="color: var(--text-muted);">(ATR {rr.atr_pct:.1f}%)</span></div>
                             <div style="height: 5px; width: 100%; background: var(--border); border-radius: 3px; overflow: hidden;">
-                                <div style="height: 100%; width: {bar_w:.0f}%; background: var(--amber-honey);"></div>
+                                <div style="height: 100%; width: {bar_w:.0f}%; background: var(--ochre);"></div>
                             </div>
                         </td>
                         <td class="text-center">{_dir_badge(rr.trade_dir)}</td>
@@ -4254,13 +4340,13 @@ def render_html(
             v_low = cd.verdict.lower()
             if v_low in ("bullish", "risk-on", "constructive"):
                 v_class = "badge-green"
-                banner_border = "var(--tropical-teal)"
+                banner_border = "var(--accent-key)"
             elif v_low in ("bearish", "risk-off", "cautious"):
                 v_class = "badge-red"
-                banner_border = "var(--rosy-copper)"
+                banner_border = "var(--terracotta)"
             else:
                 v_class = "badge-amber"
-                banner_border = "var(--amber-honey)"
+                banner_border = "var(--ochre)"
 
             conf_html = f'<div style="font-size: 0.82rem; color: var(--text-muted); font-family: var(--font-mono); margin: -8px 0 20px 0;"><strong>Confidence:</strong> {cd.scorecard.confidence}</div>' if cd.scorecard and cd.scorecard.confidence else ''
 
@@ -4484,139 +4570,160 @@ def render_html(
         }}
 
         :root, body.theme-zen {{
-            /* Tropical Earth Palette */
-            --amber-honey: #eca400;
-            --rosy-copper: #db504a;
-            --dark-slate-grey: #2c514c;
-            --tropical-teal: #56a3a6;
-            --deep-walnut: #56351e;
+            /* Forest & Clay Palette */
+            --ochre: #C98A1B;
+            --ochre-lt: #E5B04A;
+            --terracotta: #B5452F;
+            --forest: #1F4D3A;
+            --moss: #2F7D4F;
+            --accent-key: #1F4D3A;
+            --ink: #26332B;
 
             /* Mappings */
-            --bg-page: #FDFBF7;
-            --bg-sidebar: var(--dark-slate-grey);
-            --bg-card: #FFFFFF;
-            --bg-card-subtle: rgba(44, 81, 76, 0.05);
-            --bg-nav: rgba(253, 251, 247, 0.94);
-            
-            --text-main: var(--deep-walnut);
-            --text-muted: rgba(86, 53, 30, 0.65);
-            --text-sidebar: #E0EAE9;
-            
-            --primary: var(--dark-slate-grey); 
-            --border: rgba(86, 53, 30, 0.15);
-            
-            --accent-green-bg: rgba(86, 163, 166, 0.15);
-            --accent-green-txt: #2c514c;
-            --accent-red-bg: rgba(219, 80, 74, 0.12);
-            --accent-red-txt: #b33934;
-            --accent-amber-bg: rgba(236, 164, 0, 0.15);
-            --accent-amber-txt: #8f5d00;
-            
-            --green: #2c514c;
-            --red: #db504a;
-            --amber: #eca400;
-            --accent: var(--tropical-teal);
-            
-            --badge-bullish-bg: rgba(86, 163, 166, 0.15);
-            --badge-bullish-text: #2c514c;
-            --badge-bearish-bg: rgba(219, 80, 74, 0.12);
-            --badge-bearish-text: #b33934;
-            --badge-neutral-bg: rgba(236, 164, 0, 0.15);
-            --badge-neutral-text: #8f5d00;
-            
-            --shadow-card: 0 4px 12px rgba(86, 53, 30, 0.04);
-            --radius-card: 12px;
+            --bg-page: #F4EFE4;
+            --bg-sidebar: var(--forest);
+            --bg-card: #FBF8F1;
+            --bg-card-subtle: rgba(31, 77, 58, 0.06);
+            --bg-nav: rgba(244, 239, 228, 0.94);
+
+            --text-main: #26332B;
+            --text-muted: #55655A;
+            --text-sidebar: #E8EFE9;
+
+            --primary: var(--forest);
+            --border: rgba(38, 51, 43, 0.18);
+
+            --accent-green-bg: rgba(47, 125, 79, 0.14);
+            --accent-green-txt: #1F6B3E;
+            --accent-red-bg: rgba(181, 69, 47, 0.13);
+            --accent-red-txt: #9A3724;
+            --accent-amber-bg: rgba(201, 138, 27, 0.16);
+            --accent-amber-txt: #7A4F08;
+
+            --green: #2F7D4F;
+            --red: #B5452F;
+            --amber: #C98A1B;
+            --accent: var(--accent-key);
+
+            --badge-bullish-bg: rgba(47, 125, 79, 0.14);
+            --badge-bullish-text: #1F6B3E;
+            --badge-bearish-bg: rgba(181, 69, 47, 0.13);
+            --badge-bearish-text: #9A3724;
+            --badge-neutral-bg: rgba(201, 138, 27, 0.16);
+            --badge-neutral-text: #7A4F08;
+
+            /* Printed offset shadows */
+            --shadow-card: 3px 3px 0 rgba(38, 51, 43, 0.18);
+            --shadow-key: 4px 4px 0 var(--forest);
+            --shadow-hover: 5px 5px 0 rgba(38, 51, 43, 0.22);
+            --radius-card: 10px;
+
+            --font-heading: 'Playfair Display', Georgia, 'Times New Roman', serif;
+            --font-body: 'Source Sans 3', 'Segoe UI', Helvetica, Arial, sans-serif;
+            --font-num: 'Roboto Mono', SFMono-Regular, Menlo, Consolas, ui-monospace, monospace;
         }}
 
         html.dark, body.dark {{
-            --bg-page: #152422;
-            --bg-sidebar: #101c1a;
-            --bg-card: #1c302d;
-            --bg-card-subtle: rgba(86, 163, 166, 0.08);
-            --bg-nav: rgba(21, 36, 34, 0.94);
-            
-            --text-main: #FDFBF7;
-            --text-muted: rgba(253, 251, 247, 0.65);
-            --text-sidebar: #E0EAE9;
-            
-            --primary: var(--tropical-teal);
-            --border: rgba(253, 251, 247, 0.12);
-            
-            --accent-green-bg: rgba(86, 163, 166, 0.25);
-            --accent-green-txt: #7cd3d5;
-            --accent-red-bg: rgba(219, 80, 74, 0.25);
-            --accent-red-txt: #ff7d78;
-            --accent-amber-bg: rgba(236, 164, 0, 0.25);
-            --accent-amber-txt: #ffc44d;
-            
-            --green: #7cd3d5;
-            --red: #ff7d78;
-            --amber: #ffc44d;
-            --accent: var(--tropical-teal);
-            
-            --badge-bullish-bg: rgba(86, 163, 166, 0.25);
-            --badge-bullish-text: #7cd3d5;
-            --badge-bearish-bg: rgba(219, 80, 74, 0.25);
-            --badge-bearish-text: #ff7d78;
-            --badge-neutral-bg: rgba(236, 164, 0, 0.25);
-            --badge-neutral-text: #ffc44d;
-            
-            --shadow-card: 0 4px 12px rgba(0, 0, 0, 0.25);
+            --bg-page: #121A15;
+            --bg-sidebar: #0D1410;
+            --bg-card: #1B261F;
+            --bg-card-subtle: rgba(140, 201, 163, 0.08);
+            --bg-nav: rgba(18, 26, 21, 0.94);
+
+            --text-main: #F1EBDD;
+            --text-muted: rgba(241, 235, 221, 0.70);
+            --text-sidebar: #E8EFE9;
+
+            --accent-key: #8CC9A3;
+            --primary: var(--accent-key);
+            --border: rgba(241, 235, 221, 0.16);
+
+            --accent-green-bg: rgba(111, 196, 143, 0.22);
+            --accent-green-txt: #7FD1A0;
+            --accent-red-bg: rgba(232, 130, 107, 0.22);
+            --accent-red-txt: #F09A85;
+            --accent-amber-bg: rgba(229, 176, 74, 0.22);
+            --accent-amber-txt: #EDBE5F;
+
+            --green: #6FC48F;
+            --red: #E8826B;
+            --amber: #E5B04A;
+            --accent: var(--accent-key);
+
+            --badge-bullish-bg: rgba(111, 196, 143, 0.22);
+            --badge-bullish-text: #7FD1A0;
+            --badge-bearish-bg: rgba(232, 130, 107, 0.22);
+            --badge-bearish-text: #F09A85;
+            --badge-neutral-bg: rgba(229, 176, 74, 0.22);
+            --badge-neutral-text: #EDBE5F;
+
+            --shadow-card: 3px 3px 0 rgba(0, 0, 0, 0.45);
+            --shadow-key: 4px 4px 0 rgba(140, 201, 163, 0.55);
+            --shadow-hover: 5px 5px 0 rgba(0, 0, 0, 0.55);
         }}
 
         @media (prefers-color-scheme: dark) {{
             :root:not(.light) {{
-                --bg-page: #152422;
-                --bg-sidebar: #101c1a;
-                --bg-card: #1c302d;
-                --bg-card-subtle: rgba(86, 163, 166, 0.08);
-                --bg-nav: rgba(21, 36, 34, 0.94);
-                
-                --text-main: #FDFBF7;
-                --text-muted: rgba(253, 251, 247, 0.65);
-                --text-sidebar: #E0EAE9;
-                
-                --primary: var(--tropical-teal);
-                --border: rgba(253, 251, 247, 0.12);
-                
-                --accent-green-bg: rgba(86, 163, 166, 0.25);
-                --accent-green-txt: #7cd3d5;
-                --accent-red-bg: rgba(219, 80, 74, 0.25);
-                --accent-red-txt: #ff7d78;
-                --accent-amber-bg: rgba(236, 164, 0, 0.25);
-                --accent-amber-txt: #ffc44d;
-                
-                --green: #7cd3d5;
-                --red: #ff7d78;
-                --amber: #ffc44d;
-                --accent: var(--tropical-teal);
-                
-                --badge-bullish-bg: rgba(86, 163, 166, 0.25);
-                --badge-bullish-text: #7cd3d5;
-                --badge-bearish-bg: rgba(219, 80, 74, 0.25);
-                --badge-bearish-text: #ff7d78;
-                --badge-neutral-bg: rgba(236, 164, 0, 0.25);
-                --badge-neutral-text: #ffc44d;
-                
-                --shadow-card: 0 4px 12px rgba(0, 0, 0, 0.25);
+                --bg-page: #121A15;
+                --bg-sidebar: #0D1410;
+                --bg-card: #1B261F;
+                --bg-card-subtle: rgba(140, 201, 163, 0.08);
+                --bg-nav: rgba(18, 26, 21, 0.94);
+
+                --text-main: #F1EBDD;
+                --text-muted: rgba(241, 235, 221, 0.70);
+                --text-sidebar: #E8EFE9;
+
+                --accent-key: #8CC9A3;
+                --primary: var(--accent-key);
+                --border: rgba(241, 235, 221, 0.16);
+
+                --accent-green-bg: rgba(111, 196, 143, 0.22);
+                --accent-green-txt: #7FD1A0;
+                --accent-red-bg: rgba(232, 130, 107, 0.22);
+                --accent-red-txt: #F09A85;
+                --accent-amber-bg: rgba(229, 176, 74, 0.22);
+                --accent-amber-txt: #EDBE5F;
+
+                --green: #6FC48F;
+                --red: #E8826B;
+                --amber: #E5B04A;
+                --accent: var(--accent-key);
+
+                --badge-bullish-bg: rgba(111, 196, 143, 0.22);
+                --badge-bullish-text: #7FD1A0;
+                --badge-bearish-bg: rgba(232, 130, 107, 0.22);
+                --badge-bearish-text: #F09A85;
+                --badge-neutral-bg: rgba(229, 176, 74, 0.22);
+                --badge-neutral-text: #EDBE5F;
+
+                --shadow-card: 3px 3px 0 rgba(0, 0, 0, 0.45);
+                --shadow-key: 4px 4px 0 rgba(140, 201, 163, 0.55);
+                --shadow-hover: 5px 5px 0 rgba(0, 0, 0, 0.55);
             }}
         }}
 
+        {font_face_css}
+
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        html {{ scroll-behavior: smooth; font-size: 93.75%; }}
-        
+        html {{ scroll-behavior: smooth; font-size: 100%; }}
+
         body {{
-            font-family: 'Founders Grotesk', 'Helvetica Neue', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: var(--font-body);
+            font-weight: 500;
             background-color: var(--bg-page);
             color: var(--text-main);
-            line-height: 1.5;
+            line-height: 1.55;
             display: flex;
             min-height: 100vh;
             overflow-x: hidden;
         }}
 
+        h1, h2, h3 {{ font-family: var(--font-heading); font-weight: 800; }}
+
         .font-mono {{
-            font-family: 'Gt American Mono', 'JetBrains Mono', SFMono-Regular, Menlo, Monaco, Consolas, ui-monospace, monospace;
+            font-family: var(--font-num);
+            font-weight: 700;
             letter-spacing: -0.02em;
         }}
         .font-bold {{ font-weight: 700; }}
@@ -4644,8 +4751,9 @@ def render_html(
 
         .brand {{ margin-bottom: 18px; }}
         .brand h1 {{
-            font-size: 1.3rem;
-            font-weight: 700;
+            font-family: var(--font-heading);
+            font-size: 1.45rem;
+            font-weight: 800;
             letter-spacing: -0.01em;
             line-height: 1.2;
             margin-bottom: 4px;
@@ -4653,8 +4761,8 @@ def render_html(
         }}
         .brand p {{
             font-size: 0.88rem;
-            color: var(--tropical-teal);
-            font-weight: 500;
+            color: #8CC9A3;
+            font-weight: 600;
         }}
 
         .nav-menu {{
@@ -4674,7 +4782,7 @@ def render_html(
             list-style: none;
             font-size: 0.96rem;
             font-weight: 700;
-            color: var(--amber-honey);
+            color: var(--ochre-lt);
             padding: 9px 10px;
             cursor: pointer;
             border-radius: 6px;
@@ -4686,7 +4794,7 @@ def render_html(
         }}
         details > summary::-webkit-details-marker {{ display: none; }}
         details > summary:hover {{ background-color: rgba(255, 255, 255, 0.05); }}
-        details > summary::after {{ content: '+'; font-size: 1.15em; line-height: 0.5; color: var(--tropical-teal); }}
+        details > summary::after {{ content: '+'; font-size: 1.15em; line-height: 0.5; color: #8CC9A3; }}
         details[open] > summary::after {{ content: '−'; }}
 
         .nav-link {{
@@ -4709,10 +4817,10 @@ def render_html(
             transform: translateX(3px);
         }}
         .nav-link:is(:target-current, .target-current) {{
-            color: var(--amber-honey);
+            color: var(--ochre-lt);
             font-weight: 700;
-            background-color: rgba(236, 164, 0, 0.14);
-            border-left-color: var(--amber-honey);
+            background-color: rgba(229, 176, 74, 0.16);
+            border-left-color: var(--ochre-lt);
         }}
 
         .sidebar-footer {{
@@ -4723,8 +4831,8 @@ def render_html(
         .theme-toggle-btn {{
             width: 100%;
             padding: 9px;
-            background: var(--amber-honey);
-            color: var(--deep-walnut);
+            background: var(--ochre-lt);
+            color: var(--ink);
             border: none;
             border-radius: 8px;
             font-family: inherit;
@@ -4738,7 +4846,7 @@ def render_html(
             gap: 6px;
         }}
         .theme-toggle-btn:hover {{
-            background-color: #f5b324;
+            background-color: #EDBE5F;
         }}
 
         /* --- Main Content --- */
@@ -4797,7 +4905,7 @@ def render_html(
             box-shadow: 0 2px 4px rgba(0,0,0,0.02);
         }}
         .toggle-sidebar-btn:hover {{
-            border-color: var(--tropical-teal);
+            border-color: var(--accent-key);
         }}
         .nav-controls {{
             display: flex;
@@ -4830,7 +4938,7 @@ def render_html(
             align-items: center;
         }}
         .nav-btn:hover, .nav-select:hover {{
-            border-color: var(--tropical-teal);
+            border-color: var(--accent-key);
         }}
 
         @media (max-width: 1024px) {{
@@ -4872,8 +4980,9 @@ def render_html(
             font-weight: 700;
         }}
         .section-title {{
-            font-size: 1.3rem;
-            font-weight: 600;
+            font-family: var(--font-heading);
+            font-size: 1.5rem;
+            font-weight: 800;
             letter-spacing: -0.01em;
             color: var(--text-main);
             margin: 0;
@@ -4909,6 +5018,16 @@ def render_html(
         .badge-amber, .badge-neutral, .badge-yellow {{ background: var(--accent-amber-bg); color: var(--accent-amber-txt); }}
         .badge-muted {{ background: var(--bg-card-subtle); color: var(--text-muted); border: 1px solid var(--border); }}
 
+        .wc-name {{ font-size: 1rem; }}
+        .wc-desc {{ font-size: 0.78rem; color: var(--text-muted); margin-top: 2px; font-weight: 500; line-height: 1.35; max-width: 46ch; }}
+        .wc-prior {{ color: var(--text-muted); font-weight: 600; white-space: nowrap; }}
+        .wc-now {{ font-weight: 700; white-space: nowrap; }}
+        .wc-change {{ white-space: nowrap; }}
+        .wc-delta {{ font-weight: 700; font-size: 1rem; }}
+        .wc-pill {{ margin-top: 4px; font-size: 0.68rem; }}
+        .wc-key {{ font-size: 0.78rem; color: var(--text-muted); margin-top: 10px; line-height: 1.5; }}
+        .wc-key abbr {{ text-decoration: underline dotted; cursor: help; }}
+
         .text-green {{ color: var(--accent-green-txt); }}
         .text-red {{ color: var(--accent-red-txt); }}
         .text-muted {{ color: var(--text-muted); }}
@@ -4937,8 +5056,8 @@ def render_html(
             transition: transform 0.15s ease, box-shadow 0.15s ease;
         }}
         .kpi-card:hover {{
-            transform: translateY(-2px);
-            box-shadow: 0 6px 16px rgba(86, 53, 30, 0.08);
+            transform: translate(-1px, -1px);
+            box-shadow: var(--shadow-hover);
         }}
         .kpi-label {{
             font-size: 0.78rem;
@@ -4948,8 +5067,9 @@ def render_html(
             text-transform: uppercase;
         }}
         .kpi-val {{
+            font-family: var(--font-num);
             font-size: 1.5rem;
-            font-weight: 600;
+            font-weight: 700;
             color: var(--text-main);
         }}
         .kpi-sub {{
@@ -5014,7 +5134,7 @@ def render_html(
         }}
         .report-table tbody tr {{ transition: background-color 0.1s ease; }}
         .report-table tbody tr:nth-child(even) {{ background-color: var(--bg-card-subtle); }}
-        .report-table tbody tr:hover {{ background-color: rgba(236, 164, 0, 0.08); }}
+        .report-table tbody tr:hover {{ background-color: rgba(201, 138, 27, 0.08); }}
         .report-table tr:last-child td {{ border-bottom: none; }}
         .compact-table td, .compact-table th {{ padding: 8px 10px; font-size: 0.95rem; }}
         .watchlist-table td, .watchlist-table th {{ padding: 7px 9px; font-size: 0.85rem; vertical-align: middle; }}
@@ -5051,8 +5171,9 @@ def render_html(
             align-items: center;
             justify-content: space-between;
             margin-bottom: 20px;
-            border-left: 4px solid var(--amber-honey);
+            border-left: 4px solid var(--ochre-lt);
             color: #FFF;
+            box-shadow: 4px 4px 0 var(--ochre);
         }}
         .verdict-box {{
             display: flex;
@@ -5080,23 +5201,24 @@ def render_html(
             font-weight: 600;
         }}
         .verdict-banner .badge-amber, .verdict-banner .badge-neutral {{
-            background: var(--amber-honey);
+            background: var(--ochre);
             color: #1e332f;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            box-shadow: 2px 2px 0 rgba(0,0,0,0.35);
         }}
         .verdict-banner .badge-red, .verdict-banner .badge-bearish {{
-            background: var(--rosy-copper);
+            background: var(--terracotta);
             color: #FFFFFF;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            box-shadow: 2px 2px 0 rgba(0,0,0,0.35);
         }}
         .verdict-banner .badge-green, .verdict-banner .badge-bullish {{
-            background: var(--tropical-teal);
-            color: #FFFFFF;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            background: #4CAF74;
+            color: #0D1410;
+            box-shadow: 2px 2px 0 rgba(0,0,0,0.35);
         }}
         .score-val {{
+            font-family: var(--font-num);
             font-size: 1.6rem;
-            font-weight: 600;
+            font-weight: 700;
             line-height: 1;
         }}
 
@@ -5127,9 +5249,9 @@ def render_html(
         .methodology-content strong {{ color: var(--text-main); }}
 
         .alert {{ padding: 12px 16px; border-radius: 8px; font-size: 0.92rem; margin: 12px 0; line-height: 1.5; }}
-        .alert-info {{ background: var(--bg-card-subtle); border-left: 4px solid var(--tropical-teal); color: var(--text-main); }}
-        .alert-warning {{ background: rgba(236, 164, 0, 0.12); color: var(--text-main); border-left: 4px solid var(--amber-honey); }}
-        .alert-danger {{ background: rgba(219, 80, 74, 0.12); color: var(--text-main); border-left: 4px solid var(--rosy-copper); }}
+        .alert-info {{ background: var(--bg-card-subtle); border-left: 4px solid var(--accent-key); color: var(--text-main); }}
+        .alert-warning {{ background: rgba(201, 138, 27, 0.12); color: var(--text-main); border-left: 4px solid var(--ochre); }}
+        .alert-danger {{ background: rgba(181, 69, 47, 0.12); color: var(--text-main); border-left: 4px solid var(--terracotta); }}
 
         .chart-svg-container {{
             margin: 20px 0;
@@ -5181,8 +5303,8 @@ def render_html(
             transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
         }}
         .toggletip-btn:hover, .toggletip-btn:focus-visible {{
-            border-color: var(--tropical-teal);
-            color: var(--tropical-teal);
+            border-color: var(--accent-key);
+            color: var(--accent-key);
             outline: none;
         }}
         .toggletip-popover {{

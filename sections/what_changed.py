@@ -63,7 +63,7 @@ def build_what_changed(
         deltas.append(
             DeltaMetric(
                 name="Macro & Micro Trend Score",
-                current_val=f"{curr_score:+.2f} ({getattr(scorecard, 'verdict', 'Neutral')})",
+                current_val=f"{curr_score:+.2f} – {getattr(scorecard, 'verdict', 'Neutral')}",
                 prior_val=prior_score_str,
                 delta_str=delta_score_str,
                 valence=val_score,

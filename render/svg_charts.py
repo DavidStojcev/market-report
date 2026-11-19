@@ -24,11 +24,11 @@ def render_inflation_chart(indicators: List[MacroHistoricalSeries], width: int =
 
     series_map = {}
     if cpi and cpi.points:
-        series_map["Headline CPI"] = {"color": "#3b82f6", "series": cpi}
+        series_map["Headline CPI"] = {"color": "#2E8B5A", "series": cpi}
     if core_cpi and core_cpi.points:
-        series_map["Core CPI"] = {"color": "#f59e0b", "series": core_cpi}
+        series_map["Core CPI"] = {"color": "#C98A1B", "series": core_cpi}
     if core_pce and core_pce.points:
-        series_map["Core PCE"] = {"color": "#10b981", "series": core_pce}
+        series_map["Core PCE"] = {"color": "#7A4B2A", "series": core_pce}
 
     if not series_map:
         return ""
@@ -87,8 +87,8 @@ def render_inflation_chart(indicators: List[MacroHistoricalSeries], width: int =
     # 2.0% Target Line
     if y_min <= 2.0 <= y_max:
         ty = get_y(2.0)
-        svg.append(f'<line x1="{pad_left}" y1="{ty:.1f}" x2="{width - pad_right}" y2="{ty:.1f}" stroke="#ef4444" stroke-dasharray="5,4" stroke-width="1.8"/>')
-        svg.append(f'<text x="{width - pad_right - 6}" y="{ty - 6:.1f}" font-size="11" fill="#ef4444" font-weight="700" text-anchor="end">Fed Target (2.0%)</text>')
+        svg.append(f'<line x1="{pad_left}" y1="{ty:.1f}" x2="{width - pad_right}" y2="{ty:.1f}" stroke="#B5452F" stroke-dasharray="5,4" stroke-width="1.8"/>')
+        svg.append(f'<text x="{width - pad_right - 6}" y="{ty - 6:.1f}" font-size="11" fill="#B5452F" font-weight="700" text-anchor="end">Fed Target (2.0%)</text>')
 
     # Plot Lines & Points
     for s_name, s_info in series_map.items():
@@ -165,7 +165,7 @@ def render_labor_chart(indicators: List[MacroHistoricalSeries], width: int = 100
     svg.append(f'<text x="{pad_left}" y="28" font-size="15" font-weight="700" fill="var(--text-main)">Labor Market Momentum</text>')
     svg.append(f'<rect x="{width - pad_right - 230}" y="17" width="12" height="12" rx="2" fill="var(--green)"/>')
     svg.append(f'<text x="{width - pad_right - 210}" y="28" font-size="12" fill="var(--text-muted)">Nonfarm Payrolls (k)</text>')
-    svg.append(f'<circle cx="{width - pad_right - 75}" cy="23" r="5" fill="#3b82f6"/>')
+    svg.append(f'<circle cx="{width - pad_right - 75}" cy="23" r="5" fill="#2E8B5A"/>')
     svg.append(f'<text x="{width - pad_right - 62}" y="28" font-size="12" fill="var(--text-muted)">Unemployment (%)</text>')
 
     # Gridlines and Left Axis (Payrolls)
@@ -182,7 +182,7 @@ def render_labor_chart(indicators: List[MacroHistoricalSeries], width: int = 100
     for step in range(4):
         lv = l_min + (step / 3.0) * (l_max - l_min)
         ly = get_line_y(lv)
-        svg.append(f'<text x="{width - pad_right + 10}" y="{ly + 4:.1f}" font-size="11" fill="#3b82f6" text-anchor="start" font-family="monospace">{lv:.1f}%</text>')
+        svg.append(f'<text x="{width - pad_right + 10}" y="{ly + 4:.1f}" font-size="11" fill="#2E8B5A" text-anchor="start" font-family="monospace">{lv:.1f}%</text>')
 
     # Draw Payroll Bars
     bar_w = max(14.0, (plot_w / n_pts) * 0.46)
@@ -200,11 +200,11 @@ def render_labor_chart(indicators: List[MacroHistoricalSeries], width: int = 100
         for i, lv in enumerate(line_vals):
             x_center = pad_left + (i + 0.5) * (plot_w / n_pts)
             coords.append(f"{x_center:.1f},{get_line_y(lv):.1f}")
-        svg.append(f'<polyline fill="none" stroke="#3b82f6" stroke-width="3" stroke-linecap="round" points="{" ".join(coords)}"/>')
+        svg.append(f'<polyline fill="none" stroke="#2E8B5A" stroke-width="3" stroke-linecap="round" points="{" ".join(coords)}"/>')
         for i, (d, lv) in enumerate(zip(dates, line_vals)):
             x_center = pad_left + (i + 0.5) * (plot_w / n_pts)
             cy = get_line_y(lv)
-            svg.append(f'<circle cx="{x_center:.1f}" cy="{cy:.1f}" r="4.5" fill="#3b82f6" stroke="var(--bg-card-subtle)" stroke-width="1.5"><title>Unemployment ({d}): {lv:.1f}%</title></circle>')
+            svg.append(f'<circle cx="{x_center:.1f}" cy="{cy:.1f}" r="4.5" fill="#2E8B5A" stroke="var(--bg-card-subtle)" stroke-width="1.5"><title>Unemployment ({d}): {lv:.1f}%</title></circle>')
 
     # Date Ticks (every month)
     for i in range(n_pts):
@@ -223,11 +223,11 @@ def render_rates_chart(indicators: List[MacroHistoricalSeries], width: int = 100
 
     series_map = {}
     if y10 and y10.points:
-        series_map["10Y Yield"] = {"color": "#06b6d4", "series": y10}
+        series_map["10Y Yield"] = {"color": "#1F4D3A", "series": y10}
     if y2 and y2.points:
-        series_map["2Y Yield"] = {"color": "#f97316", "series": y2}
+        series_map["2Y Yield"] = {"color": "#D4684F", "series": y2}
     if dff and dff.points:
-        series_map["Fed Funds"] = {"color": "#8b5cf6", "series": dff}
+        series_map["Fed Funds"] = {"color": "#C98A1B", "series": dff}
 
     if not series_map:
         return ""
@@ -352,9 +352,9 @@ def render_activity_chart(indicators: List[MacroHistoricalSeries], width: int = 
 
     # Title & Legend
     svg.append(f'<text x="{pad_left}" y="28" font-size="15" font-weight="700" fill="var(--text-main)">Consumer Pulse &amp; Activity</text>')
-    svg.append(f'<rect x="{width - pad_right - 245}" y="17" width="12" height="12" rx="2" fill="#3b82f6"/>')
+    svg.append(f'<rect x="{width - pad_right - 245}" y="17" width="12" height="12" rx="2" fill="#2E8B5A"/>')
     svg.append(f'<text x="{width - pad_right - 225}" y="28" font-size="12" fill="var(--text-muted)">Retail Sales MoM (%)</text>')
-    svg.append(f'<circle cx="{width - pad_right - 80}" cy="23" r="5" fill="#8b5cf6"/>')
+    svg.append(f'<circle cx="{width - pad_right - 80}" cy="23" r="5" fill="#C98A1B"/>')
     svg.append(f'<text x="{width - pad_right - 68}" y="28" font-size="12" fill="var(--text-muted)">Sentiment Index</text>')
 
     # Zero line for retail sales
@@ -372,7 +372,7 @@ def render_activity_chart(indicators: List[MacroHistoricalSeries], width: int = 
     for step in range(4):
         lv = l_min + (step / 3.0) * (l_max - l_min)
         ly = get_line_y(lv)
-        svg.append(f'<text x="{width - pad_right + 10}" y="{ly + 4:.1f}" font-size="11" fill="#8b5cf6" text-anchor="start" font-family="monospace">{lv:.0f}</text>')
+        svg.append(f'<text x="{width - pad_right + 10}" y="{ly + 4:.1f}" font-size="11" fill="#C98A1B" text-anchor="start" font-family="monospace">{lv:.0f}</text>')
 
     # Draw Retail Bars
     bar_w = max(14.0, (plot_w / n_pts) * 0.46)
@@ -381,7 +381,7 @@ def render_activity_chart(indicators: List[MacroHistoricalSeries], width: int = 
         bx = x_center - (bar_w / 2.0)
         by = min(get_bar_y(bv), y_zero)
         bh = max(2.0, abs(get_bar_y(bv) - y_zero))
-        color = "#3b82f6" if bv >= 0 else "#ef4444"
+        color = "#2E8B5A" if bv >= 0 else "#B5452F"
         svg.append(f'<rect x="{bx:.1f}" y="{by:.1f}" width="{bar_w:.1f}" height="{bh:.1f}" rx="3" fill="{color}" opacity="0.88"><title>Retail Sales ({d}): {bv:+.2f}% MoM</title></rect>')
 
     # Draw Sentiment Line
@@ -390,11 +390,11 @@ def render_activity_chart(indicators: List[MacroHistoricalSeries], width: int = 
         for i, lv in enumerate(line_vals):
             x_center = pad_left + (i + 0.5) * (plot_w / n_pts)
             coords.append(f"{x_center:.1f},{get_line_y(lv):.1f}")
-        svg.append(f'<polyline fill="none" stroke="#8b5cf6" stroke-width="3" stroke-linecap="round" points="{" ".join(coords)}"/>')
+        svg.append(f'<polyline fill="none" stroke="#C98A1B" stroke-width="3" stroke-linecap="round" points="{" ".join(coords)}"/>')
         for i, (d, lv) in enumerate(zip(dates, line_vals)):
             x_center = pad_left + (i + 0.5) * (plot_w / n_pts)
             cy = get_line_y(lv)
-            svg.append(f'<circle cx="{x_center:.1f}" cy="{cy:.1f}" r="4.5" fill="#8b5cf6" stroke="var(--bg-card-subtle)" stroke-width="1.5"><title>Sentiment ({d}): {lv:.1f}</title></circle>')
+            svg.append(f'<circle cx="{x_center:.1f}" cy="{cy:.1f}" r="4.5" fill="#C98A1B" stroke="var(--bg-card-subtle)" stroke-width="1.5"><title>Sentiment ({d}): {lv:.1f}</title></circle>')
 
     # Date Ticks (every month)
     for i in range(n_pts):

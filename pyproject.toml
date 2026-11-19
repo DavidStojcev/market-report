@@ -47,3 +47,4 @@ py-modules = ["report", "qa_checks"]
 
 [tool.setuptools.package-data]
 config = ["config.yaml"]
+render = ["fonts/*.woff2"]
